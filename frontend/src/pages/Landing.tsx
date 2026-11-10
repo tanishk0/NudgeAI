@@ -1,6 +1,10 @@
+import { Link } from 'react-router-dom'
 import heroBg from '../assets/hero-bg.jpg'
+import { useAuth } from '../context/AuthContext'
 
 export function Landing() {
+  const { user, profile } = useAuth()
+
   return (
     <div className="relative h-screen min-h-[640px] w-full overflow-hidden bg-[#19132c] text-white select-none">
       {/* Full-bleed Sunset Pixel Art Background */}
@@ -28,8 +32,8 @@ export function Landing() {
         {/* Top Navigation */}
         <header className="flex items-center justify-between">
           {/* Brand Logo: 4-point star + Nudge */}
-          <a
-            href="#top"
+          <Link
+            to="/"
             className="inline-flex items-center gap-2.5 text-white focus:outline-none group"
           >
             <svg
@@ -43,31 +47,45 @@ export function Landing() {
             <span className="font-sans text-[19px] font-semibold tracking-[-0.015em] text-white">
               Nudge
             </span>
-          </a>
+          </Link>
 
           {/* Right Nav Links + CTA Pill */}
           <nav className="flex items-center gap-7 sm:gap-9">
-            <a
-              href="#projects"
+            <Link
+              to="/projects"
               className="hidden sm:inline-block font-sans text-[15px] font-normal text-white/90 transition-colors hover:text-white"
             >
               Projects
-            </a>
-            <a
-              href="#about"
-              className="hidden sm:inline-block font-sans text-[15px] font-normal text-white/90 transition-colors hover:text-white"
-            >
-              About
-            </a>
-            <a
-              href="#get-started"
-              className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 font-sans text-[14px] font-semibold tracking-[-0.01em] text-[#141418] shadow-[0_4px_20px_rgba(0,0,0,0.2)] transition-all hover:bg-white/92 hover:scale-[1.02] active:scale-[0.99]"
-            >
-              <span>Get Started</span>
-              <span aria-hidden="true" className="text-[15px] leading-none">
-                &rarr;
-              </span>
-            </a>
+            </Link>
+            {user ? (
+              <Link
+                to="/projects"
+                className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 font-sans text-[14px] font-semibold tracking-[-0.01em] text-[#141418] shadow-[0_4px_20px_rgba(0,0,0,0.2)] transition-all hover:bg-white/92 hover:scale-[1.02] active:scale-[0.99]"
+              >
+                <span>{profile?.display_name || 'Open Hub'}</span>
+                <span aria-hidden="true" className="text-[15px] leading-none">
+                  &rarr;
+                </span>
+              </Link>
+            ) : (
+              <>
+                <Link
+                  to="/auth"
+                  className="hidden sm:inline-block font-sans text-[15px] font-normal text-white/90 transition-colors hover:text-white"
+                >
+                  Sign In
+                </Link>
+                <Link
+                  to="/auth?mode=signup"
+                  className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 font-sans text-[14px] font-semibold tracking-[-0.01em] text-[#141418] shadow-[0_4px_20px_rgba(0,0,0,0.2)] transition-all hover:bg-white/92 hover:scale-[1.02] active:scale-[0.99]"
+                >
+                  <span>Get Started</span>
+                  <span aria-hidden="true" className="text-[15px] leading-none">
+                    &rarr;
+                  </span>
+                </Link>
+              </>
+            )}
           </nav>
         </header>
 
@@ -90,18 +108,18 @@ export function Landing() {
 
             {/* Primary & Secondary CTAs */}
             <div className="mt-8 sm:mt-9 flex flex-wrap items-center gap-6">
-              <a
-                href="#start"
+              <Link
+                to={user ? '/projects' : '/auth'}
                 className="inline-flex items-center gap-2.5 rounded-full bg-white px-7 py-3.5 font-sans text-[15px] font-semibold tracking-[-0.01em] text-[#141418] shadow-[0_8px_28px_rgba(12,8,24,0.32)] transition-all hover:bg-white/92 hover:scale-[1.02] active:scale-[0.99]"
               >
                 <span>Start Learning</span>
                 <span aria-hidden="true" className="text-[16px] leading-none">
                   &rarr;
                 </span>
-              </a>
+              </Link>
 
-              <a
-                href="#explore"
+              <Link
+                to="/projects"
                 className="group inline-flex items-center gap-2.5 font-sans text-[15px] font-medium text-white/90 transition-colors hover:text-white"
               >
                 <span className="flex h-6 w-6 items-center justify-center rounded-full border border-white/40 bg-white/10 backdrop-blur-sm transition-colors group-hover:border-white/70 group-hover:bg-white/20">
@@ -117,7 +135,7 @@ export function Landing() {
                 <span className="drop-shadow-[0_1px_8px_rgba(14,9,28,0.5)]">
                   Explore Projects
                 </span>
-              </a>
+              </Link>
             </div>
           </div>
         </main>
