@@ -1,5 +1,5 @@
-from typing import List, Optional, Literal
-from pydantic import BaseModel
+from typing import Any, Dict, List, Optional, Literal
+from pydantic import BaseModel, Field
 
 
 class ProjectFile(BaseModel):
@@ -7,6 +7,14 @@ class ProjectFile(BaseModel):
     language: str
     content: str
     read_only: bool = False
+
+
+class WorkspaceFile(BaseModel):
+    path: str
+    language: str
+    content: str
+    read_only: bool = False
+    is_starter: bool = True
 
 
 class TaskItem(BaseModel):
@@ -54,3 +62,46 @@ class AuthenticatedUser(BaseModel):
     display_name: Optional[str] = None
     avatar_url: Optional[str] = None
 
+
+class ChatMessageItem(BaseModel):
+    id: str
+    task_id: Optional[str] = None
+    role: Literal["user", "assistant", "system"]
+    message_type: Literal[
+        "chat", "hint_1", "hint_2", "hint_3", "solution", "evaluation"
+    ] = "chat"
+    content: str
+    created_at: str
+
+
+class WorkspaceSessionResponse(BaseModel):
+    session_id: str
+    project: Project
+    files: List[WorkspaceFile]
+    active_file_path: str
+    active_task_id: str
+    completed_task_ids: List[str] = Field(default_factory=list)
+    hint_levels: Dict[str, int] = Field(default_factory=dict)
+    last_verification: Dict[str, Any] = Field(default_factory=dict)
+    chat_messages: List[ChatMessageItem] = Field(default_factory=list)
+
+
+class UpdateWorkspaceStateRequest(BaseModel):
+    files: Optional[List[WorkspaceFile]] = None
+    active_file_path: Optional[str] = None
+    active_task_id: Optional[str] = None
+
+
+class CreateFileRequest(BaseModel):
+    path: str
+    content: str = ""
+    language: Optional[str] = None
+
+
+class RenameFileRequest(BaseModel):
+    old_path: str
+    new_path: str
+
+
+class ResetWorkspaceRequest(BaseModel):
+    reset_progress: bool = False

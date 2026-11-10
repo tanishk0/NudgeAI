@@ -1,14 +1,31 @@
 from contextlib import asynccontextmanager
 from typing import List
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.database import check_db_connection, get_db
 from app.db_models import UserRecord
-from app.models import AuthenticatedUser, Project, ProjectSummary
+from app.models import (
+    AuthenticatedUser,
+    CreateFileRequest,
+    Project,
+    ProjectSummary,
+    RenameFileRequest,
+    ResetWorkspaceRequest,
+    UpdateWorkspaceStateRequest,
+    WorkspaceSessionResponse,
+)
 from app.seed import get_project_from_db, init_db_and_seed, list_projects_from_db
+from app.workspace_service import (
+    create_user_file,
+    delete_user_file,
+    get_or_create_workspace_session,
+    rename_user_file,
+    reset_workspace_session,
+    update_workspace_state,
+)
 
 
 @asynccontextmanager
@@ -68,3 +85,70 @@ async def get_project(project_id: str, db: Session = Depends(get_db)):
     if not project:
         raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
     return project
+
+
+@app.get("/api/workspace/{project_id}", response_model=WorkspaceSessionResponse)
+async def load_workspace(
+    project_id: str,
+    current_user: UserRecord = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Load or initialize the authenticated user's workspace session for a project."""
+    return get_or_create_workspace_session(db, current_user.id, project_id)
+
+
+@app.put("/api/workspace/{project_id}/state", response_model=WorkspaceSessionResponse)
+async def save_workspace_state(
+    project_id: str,
+    payload: UpdateWorkspaceStateRequest,
+    current_user: UserRecord = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Persist file edits, active file tab, or active task selection in PostgreSQL."""
+    return update_workspace_state(db, current_user.id, project_id, payload)
+
+
+@app.post("/api/workspace/{project_id}/files", response_model=WorkspaceSessionResponse)
+async def create_workspace_file(
+    project_id: str,
+    payload: CreateFileRequest,
+    current_user: UserRecord = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create a new user file in the workspace virtual file tree."""
+    return create_user_file(db, current_user.id, project_id, payload)
+
+
+@app.patch(
+    "/api/workspace/{project_id}/files/rename", response_model=WorkspaceSessionResponse
+)
+async def rename_workspace_file(
+    project_id: str,
+    payload: RenameFileRequest,
+    current_user: UserRecord = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Rename a user-created file in the workspace virtual file tree."""
+    return rename_user_file(db, current_user.id, project_id, payload)
+
+
+@app.delete("/api/workspace/{project_id}/files", response_model=WorkspaceSessionResponse)
+async def remove_workspace_file(
+    project_id: str,
+    path: str = Query(..., description="Path of the user-created file to delete"),
+    current_user: UserRecord = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete a user-created file from the workspace virtual file tree."""
+    return delete_user_file(db, current_user.id, project_id, path)
+
+
+@app.post("/api/workspace/{project_id}/reset", response_model=WorkspaceSessionResponse)
+async def reset_workspace(
+    project_id: str,
+    payload: ResetWorkspaceRequest = ResetWorkspaceRequest(),
+    current_user: UserRecord = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Reset workspace files back to starter template (and optionally reset task progress)."""
+    return reset_workspace_session(db, current_user.id, project_id, payload)
