@@ -1,8 +1,9 @@
-import { BrowserRouter, Navigate, Route, Routes, useParams, Link } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import Landing from './pages/Landing'
 import AuthPage from './pages/AuthPage'
 import ProjectsHub from './pages/ProjectsHub'
+import WorkspacePage from './pages/WorkspacePage'
 
 function ProtectedWorkspaceGate() {
   const { user, loading } = useAuth()
@@ -25,23 +26,7 @@ function ProtectedWorkspaceGate() {
     )
   }
 
-  return (
-    <div className="flex h-screen w-full flex-col items-center justify-center bg-[#0b0c10] text-white px-6 text-center">
-      <p className="font-mono text-xs text-[#ffb86c] uppercase tracking-wider">
-        Authenticated Workspace Route Ready
-      </p>
-      <h1 className="mt-2 text-2xl font-semibold">Project: {projectId}</h1>
-      <p className="mt-2 max-w-md text-sm text-white/60">
-        Signed in as <span className="text-white">{user.email}</span>. Next up: Workspace Session API & Cursor-style Monaco IDE!
-      </p>
-      <Link
-        to="/projects"
-        className="mt-6 rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-medium text-white hover:bg-white/10 transition-colors"
-      >
-        &larr; Back to Projects Hub
-      </Link>
-    </div>
-  )
+  return <WorkspacePage />
 }
 
 function App() {
