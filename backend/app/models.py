@@ -46,3 +46,11 @@ class ProjectSummary(BaseModel):
     estimated_minutes: int
     ai_failure_mode: str
     task_count: int
+
+
+class AuthenticatedUser(BaseModel):
+    id: str
+    email: str
+    display_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+
