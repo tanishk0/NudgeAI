@@ -16,6 +16,7 @@ export interface TaskItem {
   validation_criteria: string[]
   hints: string[]
   target_file: string
+  mentor_context?: string | null
 }
 
 export interface ProjectDetail {
