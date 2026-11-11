@@ -4,6 +4,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
+from app.ai_mentor import request_progressive_nudge, send_mentor_chat_message
 from app.auth import get_current_user
 from app.database import check_db_connection, get_db
 from app.db_models import UserRecord
@@ -13,11 +14,15 @@ from app.models import (
     Project,
     ProjectSummary,
     RenameFileRequest,
+    RequestNudgePayload,
     ResetWorkspaceRequest,
+    SendChatPayload,
     UpdateWorkspaceStateRequest,
+    VerifyTaskRequest,
     WorkspaceSessionResponse,
 )
 from app.seed import get_project_from_db, init_db_and_seed, list_projects_from_db
+from app.verifier import verify_workspace_task
 from app.workspace_service import (
     create_user_file,
     delete_user_file,
@@ -152,3 +157,38 @@ async def reset_workspace(
 ):
     """Reset workspace files back to starter template (and optionally reset task progress)."""
     return reset_workspace_session(db, current_user.id, project_id, payload)
+
+
+@app.post("/api/workspace/{project_id}/verify", response_model=WorkspaceSessionResponse)
+async def verify_task_solution(
+    project_id: str,
+    payload: VerifyTaskRequest,
+    current_user: UserRecord = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Run the Two-Layer Verification Engine (Python Sandbox + NVIDIA NIM Evaluator) for a task."""
+    return await verify_workspace_task(db, current_user.id, project_id, payload)
+
+
+@app.post("/api/workspace/{project_id}/nudge", response_model=WorkspaceSessionResponse)
+async def trigger_progressive_nudge(
+    project_id: str,
+    payload: RequestNudgePayload,
+    current_user: UserRecord = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Advance the 4-step progressive hint state machine (Hint 1 -> Hint 2 -> Hint 3 -> Step 4 Solution)."""
+    return await request_progressive_nudge(db, current_user.id, project_id, payload)
+
+
+@app.post("/api/workspace/{project_id}/chat", response_model=WorkspaceSessionResponse)
+async def send_chat_message(
+    project_id: str,
+    payload: SendChatPayload,
+    current_user: UserRecord = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Send a free-form developer question to the context-aware Nudge AI Mentor."""
+    return await send_mentor_chat_message(db, current_user.id, project_id, payload)
+
+

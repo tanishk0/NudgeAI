@@ -1,5 +1,6 @@
 from typing import List, Optional
 from app.models import Project, ProjectSummary, ProjectFile, TaskItem
+from app.projects_vulpy import VULPY_PROJECT
 
 PROJECTS_DATA: List[Project] = [
     Project(
@@ -359,6 +360,7 @@ def get_team_dashboard() -> List[Dict[str, Any]]:
             )
         ],
     ),
+    VULPY_PROJECT,
 ]
 
 

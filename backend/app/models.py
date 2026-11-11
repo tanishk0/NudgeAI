@@ -27,6 +27,9 @@ class TaskItem(BaseModel):
     validation_criteria: List[str]
     hints: List[str]
     target_file: str
+    # Mentor-only briefing (CWE/OWASP mapping, exploit mechanics, verifier
+    # behaviour, common wrong fixes). Injected into the AI context packet.
+    mentor_context: Optional[str] = None
 
 
 class Project(BaseModel):
@@ -105,3 +108,40 @@ class RenameFileRequest(BaseModel):
 
 class ResetWorkspaceRequest(BaseModel):
     reset_progress: bool = False
+
+
+class CriterionEvaluation(BaseModel):
+    criterion: str
+    passed: bool
+    reason: str
+
+
+class TaskVerificationReport(BaseModel):
+    task_id: str
+    passed_all: bool
+    sandbox_passed: bool
+    sandbox_output: str
+    execution_ms: int
+    criteria_results: List[CriterionEvaluation]
+    architectural_feedback: str
+    verified_at: str
+
+
+class VerifyTaskRequest(BaseModel):
+    task_id: str
+    files: Optional[List[WorkspaceFile]] = None
+
+
+class RequestNudgePayload(BaseModel):
+    task_id: str
+    active_file_path: Optional[str] = None
+    files: Optional[List[WorkspaceFile]] = None
+
+
+class SendChatPayload(BaseModel):
+    task_id: str
+    active_file_path: Optional[str] = None
+    message: str
+    files: Optional[List[WorkspaceFile]] = None
+
+
