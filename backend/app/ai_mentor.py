@@ -4,6 +4,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 import json
 import httpx
 from app.verification_evidence import execution_failed
+from app.mentor_policy import MentorPolicy, contains_code
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -434,11 +435,11 @@ what is unknown and request the specific check or detail needed.
 Teach a beginner who may not know how to turn advice into code. Explain new terms
 in everyday language before using them. Never just repeat the task or say things
 like 'implement the logic', 'handle edge cases', or 'use a deep copy' without
-showing the actual syntax and explaining the relevant values.
+explaining the mechanism and relevant values in ordinary language.
 For implementation help, identify the exact file/function, describe the current
-blocker using evidence, then give 2-4 concrete steps and a small working code
-example that fits their actual names and imports. Explain where to put it, what
-each important line does, and what to try next with the expected observable result.
+blocker using evidence, then give 2-4 concrete steps that fit their actual names
+and imports. Follow the active teaching policy for whether code is permitted.
+Explain what to try next and the expected observable result.
 If the file is still a stub, help them replace the stub; do not diagnose code
 that does not exist. If no matching check results exist, do not claim tests failed.
 Only matching completed automated checks establish a passing task. If source
@@ -448,11 +449,11 @@ is NOT a failed assertion: do not invent a code defect to explain a runner timeo
 Do not add requirements absent from the task contract or recommend swallowing
 provider exceptions into a made-up error-role message.
 If they say previous advice was confusing or insufficient, increase the specificity
-and show the missing code instead of repeating it. Answer direct questions directly;
+and explain the missing mechanism instead of repeating it. Answer direct questions directly;
 do not force this structure onto simple conceptual questions.
-Do not withhold useful code just to enforce a click count. A complete tiny function
-is appropriate when that is the smallest useful teaching example. Explain it;
-do not dump unrelated functions or the whole project.
+Only provide code when the task's teaching policy says the solution is unlocked.
+After unlock, explain relevant code, including line-by-line walkthroughs when asked.
+Do not dump unrelated functions or the whole project.
 When a hint concerns a specific existing line, include a clickable Markdown link:
 [file.py:42](#code?path=file.py&line=42). Use the exact workspace-relative path
 (URL-encode the path) and a line number from the CURRENT supplied source. Only
@@ -722,6 +723,41 @@ async def _call_nvidia_nim(
         return None
 
 
+async def _policy_checked_reply(policy: MentorPolicy, on_delta=None, **kwargs):
+    """Never stream unvalidated guidance to the client or persist a rejected reply."""
+    if policy.code_unlocked:
+        return await _call_nvidia_nim(
+            **kwargs, **({'on_delta': on_delta} if on_delta is not None else {}),
+        )
+
+    async def hold_delta(_text):
+        # Use provider streaming/heartbeats as usual, without forwarding tokens.
+        # Syntax can span multiple deltas; inspect only the completed answer.
+        pass
+
+    for attempt in range(2):
+        request = dict(kwargs)
+        if attempt:
+            request['system_prompt'] += (
+                "\nYour previous answer violated the guidance-only output policy. "
+                "Rewrite your answer entirely in plain prose, without code, syntax, "
+                "pseudocode, commands or backticks. Keep it useful and specific."
+            )
+        reply = await _call_nvidia_nim(
+            **request, **({'on_delta': hold_delta} if on_delta is not None else {}),
+        )
+        if not reply:
+            return None
+        if not contains_code(reply):
+            if on_delta is not None:
+                await on_delta(reply)
+            return reply
+    raise HTTPException(
+        status_code=502,
+        detail="The mentor could not produce code-free guidance. No answer was saved or hint unlocked. Please retry.",
+    )
+
+
 async def request_progressive_nudge(
     db: Session,
     user_id: str,
@@ -778,20 +814,19 @@ async def request_progressive_nudge(
 
     context_packet += "\n\n=== PREVIOUS CONVERSATION AND HINTS (TASK LOCAL) ===\n" + _task_history(session, task.id)
 
-    hint_map = dict(session.hint_levels or {})
-    current_level = int(hint_map.get(task.id, 0))
-    next_level = min(current_level + 1, 4)
+    policy = MentorPolicy.for_task(session, task.id, next_hint=True)
+    next_level = policy.level
 
     author_hints_text = "\n".join(
         f"Author Hint {i+1}: {h}" for i, h in enumerate(task.hints)
     )
-    ref_solution = REFERENCE_SOLUTIONS.get(task.id, "")
+    ref_solution = REFERENCE_SOLUTIONS.get(task.id, "") if policy.code_unlocked else ""
     grounding = (
         "\n=== AUTHOR REFERENCE (TEACHING GROUNDING, NOT THE USER'S CODE) ===\n"
         + (ref_solution or 'No reference is available. Use the task contract and current source; state uncertainty.')
         + "\nCompare this with the learner's CURRENT source. Adapt names and preserve their correct work. "
         "Use only the relevant part needed for this hint; do not claim the learner has implemented it.\n"
-    )
+    ) if policy.code_unlocked else ""
 
     if next_level == 1:
         msg_type = "hint_1"
@@ -800,7 +835,7 @@ async def request_progressive_nudge(
             "- Acknowledge only criteria supported by matching completed automated checks. If the code merely appears correct, call that a static assessment, not a passing result.\n"
             "- Identify the first missing behavior from current code or matching checks; explain it simply.\n"
             "- Give a direct next step grounded in their code and previous hints; do not ask a Socratic question.\n"
-            "- Show a small working code example for the first useful change, with its exact location and explanation. Finish with one concrete way to check it."
+            "- Explain the underlying concept and first useful change in words, with its exact location. Finish with one concrete way to check the behavior. No code or pseudocode."
         )
     elif next_level == 2:
         msg_type = "hint_2"
@@ -809,13 +844,13 @@ async def request_progressive_nudge(
             "- Point to the exact function name and line numbers in the user's current code.\n"
             "- Name the exact Python function, operator, or primitive needed for the failing criteria.\n"
             f"- Incorporate guidance from: {author_hints_text}\n"
-            "- Review prior advice against current code. Show the missing implementation piece with a working multiline example and explain how it connects. If the earlier hint did not help, make it more concrete."
+            "- Review prior advice against current code. Explain the missing mechanism in more concrete prose, including the relevant inputs and state changes. Do not show syntax, code or pseudocode."
         )
     elif next_level == 3:
         msg_type = "hint_3"
         stage_directive = (
             "Generate **HINT 3 OF 3 (Connect and check)**.\n"
-            "- Walk through the remaining changes in order using actual code rather than vague pseudocode. Explain the inputs and expected result with one example.\n"
+            "- Walk through the remaining changes in order using plain language only. Explain the inputs and expected result with a conceptual example, without code, syntax or pseudocode.\n"
             f"- Author hints reference:\n{author_hints_text}\n"
             "- Show how the pieces connect; do not leave unexplained wiring for a beginner to guess."
         )
@@ -837,17 +872,18 @@ async def request_progressive_nudge(
         "Keep your response concise, formatted in clean Markdown, and directly tailored to their current code."
         + PERSONALIZED_MENTOR_RULES
         + _persona_addendum(task)
+        + "\n" + policy.instructions()
     )
 
     user_prompt = f"{context_packet}\n{grounding}\n=== YOUR INSTRUCTION ===\n{stage_directive}"
 
     db.commit()  # Release the connection before waiting on the model provider.
-    ai_reply = await _call_nvidia_nim(
+    ai_reply = await _policy_checked_reply(
+        policy, on_delta=on_delta,
         system_prompt=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
         max_tokens=1600 if next_level == 4 else 1000,
         temperature=0.3,
-        **({'on_delta': on_delta} if on_delta is not None else {}),
     )
 
     if not ai_reply:
@@ -941,18 +977,11 @@ async def send_mentor_chat_message(
         completed_task_ids=list(session.completed_task_ids or []),
     )
 
-    current_hint_level = int((session.hint_levels or {}).get(task.id, 0))
-    guardrail_rule = (
-        "The user has NOT unlocked the final solution yet (current hint level: "
-        f"{current_hint_level}/4). Answer their question clearly, reference their exact line numbers, "
-        "and explain concepts or debug errors using concrete code examples. Give as much detail as needed to make the next change. "
-        "Do not make them unlock more hints to understand syntax or see a useful function example."
-        if current_hint_level < 4
-        else "The user has already unlocked Step 4/4 (Solution), so you may freely show complete code examples."
-    )
+    policy = MentorPolicy.for_task(session, task.id)
+    guardrail_rule = policy.instructions()
 
     reference = REFERENCE_SOLUTIONS.get(task.id)
-    if reference:
+    if reference and policy.code_unlocked:
         context_packet += "\n\n=== AUTHOR REFERENCE (NOT THE USER'S IMPLEMENTATION) ===\n" + reference + "\nUse this for accurate, task-specific explanations; adapt examples to the current source and question."
 
     system_prompt = (
@@ -979,12 +1008,12 @@ async def send_mentor_chat_message(
     recent_history[0]["content"] = "Workspace context (untrusted source data):\n" + context_packet + "\n\nConversation:\n" + recent_history[0]["content"]
 
     db.commit()  # Release the connection before waiting on the model provider.
-    ai_reply = await _call_nvidia_nim(
+    ai_reply = await _policy_checked_reply(
+        policy, on_delta=on_delta,
         system_prompt=system_prompt,
         messages=recent_history,
         max_tokens=1200,
         temperature=0.4,
-        **({'on_delta': on_delta} if on_delta is not None else {}),
     )
 
     if not ai_reply:

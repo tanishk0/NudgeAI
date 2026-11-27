@@ -10,6 +10,11 @@ env/
 .demo/
 backend/.rehearsal/
 
+# Local presentation authoring files; deliverables live in presentation/output/
+presentation/.build/
+presentation/assets/
+presentation/build-*.mjs
+
 # Node / Frontend
 node_modules/
 dist/

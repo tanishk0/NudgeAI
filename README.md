@@ -131,7 +131,9 @@ The deterministic checks are learning feedback, not a tamper-resistant examinati
 
 The mentor receives project goals, task criteria, the roadmap, numbered target/focused code, relevant local imports, a bounded diff, and verification evidence only when it matches the current source hash. Private author hints and briefings are removed from public API models. Learner source is treated as untrusted context rather than system instructions.
 
-Three hints progressively increase specificity; the fourth reveals a reference solution. If NVIDIA credentials are absent or the provider fails, authored fallback guidance is available. AI feedback does not determine task pass/fail. Responses are currently returned as complete messages, not token streams.
+Three hints progressively increase specificity without code. The fourth reveals the active task's reference solution and allows mentor chat to explain code, including line-by-line walkthroughs. Both endpoints use the task's persisted hint level, so chat cannot unlock code or inherit another task's unlock. Before unlock, reference solutions are withheld from the prompt and completed answers pass a conservative syntax detector before display. A rejected answer gets one rewrite attempt; repeated violations or provider failures save no assistant response and advance no hint. The detector is a heuristic for common code forms, not a proof against every possible encoding of code.
+
+Mentor endpoints stream provider responses. Before unlock, the server holds text until the completed answer passes the output check, while the connection sends keepalives. After unlock, code can stream normally. Missing credentials and provider errors return an unavailable response rather than an authored answer presented as AI. AI feedback does not determine task pass/fail.
 
 Changing source makes old verification results stale. Checking a task also rechecks previously completed tasks against the same source snapshot. A workspace edit during checking returns a revision conflict rather than attaching an old result to new code.
 

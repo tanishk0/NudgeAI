@@ -231,7 +231,9 @@ export function AiSideChat({
           </div>
         </form>
         <p className="mentor-footnote">
-          Hints guide your thinking. You build the solution.
+          {hintLevel < 4
+            ? 'Hints 1–3 and chat give guidance without code. Hint 4 unlocks the task solution.'
+            : 'Solution unlocked. Ask the mentor to explain the code line by line.'}
         </p>
       </div>
     </div>

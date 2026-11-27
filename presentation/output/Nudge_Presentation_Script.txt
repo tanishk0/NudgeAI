@@ -1,0 +1,355 @@
+NUDGE PRESENTATION SCRIPT
+Tanishq Aggarwal and Shailesh Nandan
+ADGIPS, New Delhi
+CSE
+
+HOW TO USE THIS SCRIPT
+The 12 slides carry the main argument visually. Speak to the diagrams rather
+than reading every label. Bracketed directions are stage cues, not spoken text.
+Allow about 11-13 minutes of explanation and 3-5 minutes for the live demo.
+The timing is flexible. Pause for a judge's question when it helps understanding.
+
+SLIDE 1: NUDGE
+Speaker: Tanishq | About 30 seconds
+
+Good morning. We are Tanishq Aggarwal and Shailesh Nandan from CSE,
+ADGIPS, New Delhi. Our project is Nudge, a guided coding workspace.
+
+The idea is simple: give a learner a real project to build, provide the setup
+and guidance, and let the learner implement the engineering that matters.
+We will show the learning flow, then the system underneath it, and finish
+with a working demonstration.
+
+[Pause on the project name, then advance.]
+
+SLIDE 2: I WANTED TO BUILD. I KEPT GETTING STUCK.
+Speaker: Tanishq | About 75 seconds
+
+This began with how I wanted to learn programming myself.
+
+AI can produce working code quickly. But someone still needs enough
+understanding to notice when that code misses a requirement, adds unnecessary
+complexity, or implements something only superficially.
+
+Writing the core implementation gives us that understanding. The difficulty
+is reaching that part. First we choose a project, configure the environment,
+write setup code, and search through solutions when we get stuck.
+
+[Trace the four steps from left to right.]
+
+That friction makes copying a full answer tempting. The project gets finished,
+but the student can miss the decisions that would have taught them something.
+
+Nudge supplies the starting point, a task sequence and help with the current
+problem. The learner still implements the core logic. This is our motivation
+and design hypothesis. We are not presenting it as a measured finding about
+all students.
+
+[Handover: "Shailesh will show how that becomes an actual workspace."]
+
+SLIDE 3: A REAL PROJECT, BROKEN INTO BUILDABLE TASKS
+Speaker: Shailesh | About 55 seconds
+
+This is the project brief in the application. Our example project is a small
+coding agent, taught through 39 individual tasks.
+
+The learner begins with project files and supporting setup already supplied.
+The tasks focus on implementation: a model adapter, an agent loop, tool
+execution, and later reliability, memory and security mechanisms.
+
+The learning loop is visible at the bottom. Read the concept behind a task,
+implement it in the project, check the behavior, then continue.
+
+This is a teaching adaptation of mini-swe-agent. We follow its package layout
+so the components connect naturally. We do not claim that this course
+reproduces every upstream feature or its benchmark performance.
+
+SLIDE 4: ONE WORKSPACE. THREE ENGINEERING PATHS.
+Speaker: Shailesh | About 65 seconds
+
+[Point first to the browser, then to the API and the three destinations.]
+
+The browser contains the React interface and Monaco editor. It sends the
+learner's actions to a FastAPI backend.
+
+There are three distinct paths. Saving a file updates the workspace in
+PostgreSQL. Asking the mentor assembles context and calls the AI provider.
+Checking or running code uses Docker.
+
+Keeping these responsibilities separate matters. The editor holds the
+learner's current work. The model provides guidance. The runner executes
+code and returns evidence of what happened. A message from the AI alone
+does not establish whether the code passes the task.
+
+The backend coordinates these paths and returns their results to one interface.
+
+SLIDE 5: BROWSER FILES BECOME A VERSIONED WORKSPACE
+Speaker: Shailesh | About 65 seconds
+
+One challenge was giving a browser editor the behavior of a project workspace.
+
+[Point to the package paths on the left.]
+
+These are representative learner files. A model task lives in the models
+package, an agent task in agents, and environment tasks in environments.
+This helps the learner see how each implementation fits into the project.
+
+[Trace Edit, Save and Execute.]
+
+The browser maintains the editing buffer and can recover a local draft.
+Saving persists file revisions in the database. Revision handling helps
+prevent one save from silently overwriting a newer version, while checkpoints
+provide recovery points.
+
+For execution, the server takes a saved file snapshot and provisions it
+inside Docker. The learner's virtual filesystem becomes real files for
+the duration of execution. Monaco itself does not run the Python code.
+
+[Handover: "Tanishq will explain how the AI and execution paths use this workspace."]
+
+SLIDE 6: THE MENTOR NEEDS THE RIGHT EVIDENCE
+Speaker: Tanishq | About 75 seconds
+
+The AI integration is more than sending the latest chat message to a model.
+The model needs enough context to understand the learner's actual task.
+
+[Trace the four inputs into context assembly.]
+
+We provide the task contract, relevant source, the conversation for that
+task, and verification evidence that matches the current code revision.
+The backend assembles this context before calling NVIDIA NIM.
+
+For example, if a learner asks why their result is wrong, the mentor should
+know the required behavior and the implementation they are discussing.
+If a check result belongs to an older version, it should not diagnose
+the current code as though nothing changed.
+
+This makes the guidance specific to the learner's situation. It also has
+a clear limit: model output can still be wrong. We keep the model's
+explanation separate from the behavior recorded by executed checks.
+Asking the mentor does not itself execute the learner's code.
+
+SLIDE 7: LEARNER CODE RUNS INSIDE A BOUNDARY
+Speaker: Tanishq | About 75 seconds
+
+[Trace saved source into the Docker boundary, then outputs on the right.]
+
+The platform accepts code written by the learner, so we treat that source
+as untrusted. Running it directly in the API process would give it the
+wrong level of access.
+
+We provision the files into a Docker runner. The learner process runs
+without root privileges, with networking disabled, and with a read-only
+base filesystem. It gets a temporary writable workspace for the operations
+the task needs.
+
+Resource limits bound memory, CPU and process use. Execution timeouts and
+output limits prevent a loop or a large print operation from running forever.
+Platform provider secrets remain outside that process.
+
+The runner returns standard output, standard error, an exit code and check
+status. These structured results are what the interface can report.
+Docker gives us a practical isolation boundary, with deliberate restrictions,
+rather than relying on the learner to write harmless code.
+
+SLIDE 8: A TIMEOUT EXPOSED A VERIFICATION BUG
+Speaker: Shailesh | About 85 seconds
+
+This screenshot records a real failure we encountered during development.
+The mentor said the code looked correct, while the checks said verification
+had failed before completion. The review then suggested a code change
+that was not established by an assertion result.
+
+The underlying issue was a timeout budget that included runner overhead.
+The same saved Model implementation later passed both checks unchanged.
+
+[Point to the three outcome labels.]
+
+That led to a clearer distinction. Pass means the required checks completed
+successfully. Fail means an executed assertion found a mismatch. No verdict
+means execution did not finish in a way that establishes correctness.
+
+We separated execution timing from runner overhead and stopped treating
+incomplete verification as evidence of a code defect. We also associate
+results with the code version, so edits make old results visibly stale.
+
+The lesson for us was that evaluation needs reliable execution and accurate
+status reporting. An AI explanation cannot repair missing evidence.
+
+SLIDE 9: A CONCEPT PAGE CONNECTS READING TO IMPLEMENTATION
+Speaker: Tanishq | About 60 seconds
+
+This is the concept page for the first task. It explains the mechanism,
+shows a concrete example and connects that understanding back to the
+implementation in the workspace.
+
+Our intended help policy appears on the right. The first three hints,
+including mentor chat during that stage, should give increasingly clear
+guidance without supplying solution code. The fourth hint reveals the
+solution for the current task. After that, the mentor can explain the
+solution line by line.
+
+We have marked this as an intended policy because the current mentor prompts
+still need consistent enforcement across chat and hints. We should not claim
+that the current version guarantees code-free guidance.
+
+The broader aim is to help the student understand the component before
+they move to the next one.
+
+SLIDE 10: LIVE DEMO: FOLLOW THE EVIDENCE
+Speakers: Both | Allow 3-5 minutes
+
+Tanishq:
+We will now follow one task through the actual system. Watch for the
+task contract, the source being edited, the attached mentor context,
+and the results produced by execution.
+
+[Switch to the application. Keep this slide available as the demo checklist.]
+
+DEMO CUE 1 - Shailesh:
+Open the mini-swe workspace and show a task brief beside its real package file.
+Show the relevant concept page briefly. Avoid scrolling through the whole course.
+Say: "The task is scoped to a component in the same project the student is building."
+
+DEMO CUE 2 - Tanishq:
+Ask one focused mentor question about the visible task. Use a question whose
+context can be checked on screen, such as "What state must this method avoid
+mutating?" Explain which task and files supply context.
+Do not promise a particular response or claim an unverified hint restriction.
+
+DEMO CUE 3 - Shailesh:
+Show a saved implementation and run Check task. Show a completed result and
+its execution logs. If demonstrating an error and correction, rehearse the
+exact edit first. Show how editing makes the earlier result stale.
+Say: "The evidence belongs to the implementation version that was checked."
+
+DEMO CUE 4 - Tanishq:
+On a suitably completed workspace, click Run and open Preview. Show the repair
+experiment, command output and resulting test status.
+Say: "This preview uses scripted model decisions, but it executes real commands,
+changes files and runs tests. It demonstrates the integration reproducibly."
+The preview is a browser inspector. It does not open an interactive agent CLI.
+
+[If the live AI provider is slow, continue with the other steps and return
+to it once. If a runner reports No verdict, explain that status honestly.
+Do not present an older screenshot as a new live result.]
+
+[Return to slide 11.]
+
+SLIDE 11: WHAT WE VALIDATED. WHAT REMAINS OPEN.
+Speaker: Shailesh | About 70 seconds
+
+We tested the task contracts across the 39 solution tasks, the execution
+boundaries, the repair preview, and workspace recovery and revision behavior.
+
+Those checks cover important integration behavior: whether the correct
+implementation satisfies a task, whether execution terminates predictably,
+and whether the interface reports the appropriate evidence.
+
+We also checked the frontend build and stream handling. Some environment
+specific tests require Docker or PostgreSQL, so we distinguish test runs
+by their available environment instead of claiming that every test always ran.
+
+There are still open items. We need consistent hint policy enforcement,
+broader load testing, and an evaluation with students.
+
+Passing implementation checks does not prove that a learner understands
+the implementation. Measuring learning effectiveness would need a separate
+study, for example whether learners can explain and modify their code later.
+
+SLIDE 12: BUILT TOGETHER. OWNED END TO END.
+Speakers: Both | About 40 seconds
+
+Tanishq:
+My main work was AI context engineering and Docker execution.
+
+Shailesh:
+My main work was the editor and task verification. The user flow, project
+flow and most other product decisions were shared.
+
+Tanishq:
+Nudge gives students a project they can start building immediately,
+with guidance and execution connected to their actual work. Our goal is
+for them to finish with an implementation they can explain and change.
+
+Thank you. We are ready for your questions.
+
+======================================================================
+REHEARSAL AND BACKUP NOTES - NOT PART OF THE SPOKEN SCRIPT
+======================================================================
+
+Before presenting:
+- Open the PPTX in PowerPoint and check it on the actual display/projector.
+- Start the frontend, backend and Docker Desktop before the session.
+- Sign into the app and load the intended learner workspace in advance.
+- Rehearse Check task and Preview with that exact workspace. A fresh workspace
+  with unimplemented tasks cannot show a completed repair experiment.
+- Keep one truthful fallback screenshot for each important live checkpoint.
+- Close unrelated tabs and notifications. Keep credentials out of view.
+- Do not reset the learner's files during the presentation unless planned.
+
+Useful launch commands from the project checkout:
+
+Frontend, in a terminal:
+  cd frontend
+  npm run dev -- --host 127.0.0.1
+
+Backend, in a second PowerShell terminal:
+  cd backend
+  $env:FRONTEND_URL='http://localhost:5173,http://127.0.0.1:5173'
+  .venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+These assume the existing configured environment and dependencies. Use
+the URL printed by Vite. Avoid starting a duplicate process on an occupied port.
+
+Preview clarification:
+Completing all tasks does not automatically launch a CLI. Preview opens
+the browser inspector. The exported learner project has its own CLI, which
+needs its own runtime configuration and model credentials for live model use.
+
+Likely questions:
+
+Q: How do you evaluate code if the AI can be wrong?
+A: Trusted task checks run against the saved implementation in Docker.
+   AI review is supplementary. We distinguish assertion failure, successful
+   checks and incomplete execution, and tie results to the code version.
+
+Q: Why not just use ChatGPT?
+A: Nudge connects a project sequence, real files, task context and execution
+   evidence in one learning loop. The student does not repeatedly reconstruct
+   their project context in a separate chat.
+
+Q: Can a student still copy a solution?
+A: Yes, especially after the intended fourth-hint unlock or from another tool.
+   Our intended first-three-hints policy encourages an attempt before the
+   solution. It is not an anti-cheating guarantee. Current prompts still need
+   alignment before we promise consistent enforcement.
+
+Q: Does passing prove understanding?
+A: It establishes behavior for the checks we ran. Understanding requires
+   additional assessment, such as explaining the code and adapting it to a
+   changed requirement. We have not completed a learning outcome study.
+
+Q: Is the repair preview using a live autonomous model?
+A: Its decisions are scripted for reproducibility. Commands, file changes
+   and tests execute for real. The mentor separately calls the live provider.
+
+Q: Why Docker?
+A: Learner code needs a boundary from the API and its secrets. We use Docker
+   with non-root execution, network restrictions, temporary storage and limits.
+
+Q: What was the most useful implementation lesson?
+A: A runner timeout gave no verdict about the code, but the interface and
+   review initially treated it like a solution failure. Accurate evidence
+   states are essential before adding an AI explanation.
+
+Q: What do you implement next?
+A: Align the hint and chat policy, broaden load and environment testing,
+   then evaluate whether students can explain and modify what they built.
+
+Evidence precision if asked for test counts:
+The recorded full Docker suite had 47 tests, with one PostgreSQL-only test
+skipped. A later non-Docker suite had 48 tests, with eight environment-dependent
+skips. These were separate runs. Do not add the counts together or describe
+the later run as 48 Docker integration tests passing. They are development
+evidence, not a new test run performed while producing this presentation.
