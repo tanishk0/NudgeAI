@@ -410,7 +410,8 @@ def do_api_post():
 
 
 # Out of scope finding: the Werkzeug debugger allows arbitrary code execution.
-app.run(debug=True, host="127.0.1.1", port=5000)
+if __name__ == "__main__":
+    app.run(debug=False, host="0.0.0.0", port=5000)
 '''
 
 LEAKED_PASSWORDS_TXT = '''123456

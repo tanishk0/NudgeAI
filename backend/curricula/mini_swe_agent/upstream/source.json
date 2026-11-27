@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/SWE-agent/mini-swe-agent",
+  "commit": "04d809ceab9df28f9adaed044884180159172930",
+  "files": {
+    "default.py": "src/minisweagent/agents/default.py",
+    "local.py": "src/minisweagent/environments/local.py",
+    "protocols.py": "src/minisweagent/__init__.py",
+    "LICENSE.md": "LICENSE.md"
+  }
+}

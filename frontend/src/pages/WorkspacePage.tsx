@@ -1,742 +1,1301 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import '../styles/concepts.css'
 import Editor, { type OnMount } from '@monaco-editor/react'
 import { Group, Panel, Separator } from 'react-resizable-panels'
 import {
+  BookOpen,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
+  Circle,
   CloudCheck,
+  Code2,
+  Download,
+  ExternalLink,
+  Files,
+  History,
+  LayoutPanelLeft,
+  Lightbulb,
   Loader2,
-  Lock,
+  LockKeyhole,
+  Maximize2,
+  MessageSquare,
+  PanelBottom,
+  PanelLeftClose,
   Play,
   RotateCcw,
+  Save,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  Square,
   Terminal,
   X,
-  FolderGit2,
 } from 'lucide-react'
-import { apiFetch } from '../lib/supabase'
-import { NUDGE_MONACO_THEME, registerNudgeMonacoTheme } from '../lib/monacoTheme'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { useWorkspace } from '../hooks/useWorkspace'
+import { apiFetch, API_BASE_URL } from '../lib/supabase'
 import { FileExplorer, getFileIcon } from '../components/workspace/FileExplorer'
-import { TaskHeaderBar } from '../components/workspace/TaskHeaderBar'
-import { ConsoleDrawer } from '../components/workspace/ConsoleDrawer'
 import { AiSideChat } from '../components/workspace/AiSideChat'
-import type {
-  WorkspaceFile,
-  WorkspaceSessionResponse,
-  TaskVerificationReport,
-} from '../types/workspace'
-import type { ProjectSummary } from './ProjectsHub'
+import {
+  NUDGE_MONACO_THEME,
+  registerNudgeMonacoTheme,
+} from '../lib/monacoTheme'
+import type { Checkpoint, RuntimeResult } from '../types/workspace'
+import '../styles/workbench.css'
 
-export function WorkspacePage() {
-  const { projectId } = useParams<{ projectId: string }>()
-  const navigate = useNavigate()
-
-  const [sessionData, setSessionData] = useState<WorkspaceSessionResponse | null>(
-    null
+export default function WorkspacePage() {
+  const { projectId = '' } = useParams()
+  const workspace = useWorkspace(projectId)
+  const {
+    session,
+    files,
+    activeFile: activePath,
+    activeTask: taskId,
+    sync,
+    mutating,
+  } = workspace
+  const [tabs, setTabs] = useState<string[]>([])
+  const [left, setLeft] = useState<'files' | 'tasks' | 'history'>('files')
+  const [explorer, setExplorer] = useState(true)
+  const [assistant, setAssistant] = useState(true)
+  const [sideView, setSideView] = useState<'task' | 'mentor'>('task')
+  const [previewExpanded, setPreviewExpanded] = useState(false)
+  const [bottom, setBottom] = useState<'output' | 'checks' | 'preview' | null>(
+    'output',
   )
-  const [allProjects, setAllProjects] = useState<ProjectSummary[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  // Local editor state
-  const [files, setFiles] = useState<WorkspaceFile[]>([])
-  const [openTabs, setOpenTabs] = useState<string[]>([])
-  const [activeFilePath, setActiveFilePath] = useState<string>('')
-  const [activeTaskId, setActiveTaskId] = useState<string>('')
-  const [dirtyPaths, setDirtyPaths] = useState<Set<string>>(new Set())
-  const [syncStatus, setSyncStatus] = useState<'saved' | 'saving' | 'unsaved'>(
-    'saved'
-  )
-
-  // Cursor position for bottom status bar
-  const [cursorPos, setCursorPos] = useState<{ line: number; column: number }>({
-    line: 1,
-    column: 1,
-  })
-
-  // Bottom Console & Verification state
-  const [consoleOpen, setConsoleOpen] = useState(false)
-  const [runningVerify, setRunningVerify] = useState(false)
-
-  // AI Side Chat loading states
-  const [sendingChat, setSendingChat] = useState(false)
-  const [requestingHint, setRequestingHint] = useState(false)
-
-  const saveTimerRef = useRef<number | null>(null)
-
-  // Fetch project summaries for the top Project Switcher dropdown
+  const [running, setRunning] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [chatting, setChatting] = useState(false)
+  const [hinting, setHinting] = useState(false)
+  const [runtime, setRuntime] = useState<RuntimeResult | null>(null)
+  const [snapshots, setSnapshots] = useState<Checkpoint[]>([])
+  const [cursor, setCursor] = useState({ line: 1, column: 1 })
+  const [filter, setFilter] = useState('')
+  const [confirm, setConfirm] = useState<{
+    label: string
+    description: string
+    action: () => Promise<unknown>
+  } | null>(null)
+  const [notice, setNotice] = useState('')
+  const showExplorer = () => {
+    if (window.innerWidth < 950) setAssistant(false)
+    setExplorer(true)
+  }
+  const toggleMentor = () => {
+    if (!assistant && window.innerWidth < 950) setExplorer(false)
+    setAssistant(!assistant)
+  }
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
+  const monacoRef = useRef<Parameters<OnMount>[1] | null>(null)
+  const pendingHintLine = useRef<{ path: string; line: number } | null>(null)
+  const hintDecoration = useRef<ReturnType<
+    Parameters<OnMount>[0]['createDecorationsCollection']
+  > | null>(null)
+  const highlightHint = (editor: Parameters<OnMount>[0], line: number) => {
+    hintDecoration.current?.clear()
+    hintDecoration.current = editor.createDecorationsCollection([
+      {
+        range: {
+          startLineNumber: line,
+          startColumn: 1,
+          endLineNumber: line,
+          endColumn: 1,
+        },
+        options: { isWholeLine: true, className: 'mentor-hint-line' },
+      },
+    ])
+    editor.setSelection({
+      startLineNumber: line,
+      startColumn: 1,
+      endLineNumber: line,
+      endColumn: editor.getModel()?.getLineMaxColumn(line) || 1,
+    })
+    editor.revealLineInCenter(line)
+    editor.focus()
+  }
+  const layoutCleanup = useRef<(() => void) | null>(null)
+  const saveRef = useRef(workspace.save)
   useEffect(() => {
-    apiFetch<ProjectSummary[]>('/api/projects')
-      .then(setAllProjects)
-      .catch(() => {})
+    const resize = () => {
+      if (window.innerWidth < 1100) setExplorer(false)
+      if (window.innerWidth < 850) setAssistant(false)
+    }
+    resize()
+    window.addEventListener('resize', resize)
+    return () => window.removeEventListener('resize', resize)
   }, [])
-
-  // Load workspace session from PostgreSQL
   useEffect(() => {
-    if (!projectId) return
-    let active = true
-    setLoading(true)
-    setError(null)
-
-    apiFetch<WorkspaceSessionResponse>(`/api/workspace/${projectId}`)
-      .then((data) => {
-        if (!active) return
-        setSessionData(data)
-        setFiles(data.files)
-        setActiveFilePath(data.active_file_path)
-        setActiveTaskId(data.active_task_id)
-        setOpenTabs(data.files.map((f) => f.path))
-        setDirtyPaths(new Set())
-        setSyncStatus('saved')
-      })
-      .catch((err: Error) => {
-        if (!active) return
-        setError(err.message || 'Failed to load workspace session.')
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-
-    return () => {
-      active = false
+    saveRef.current = workspace.save
+  }, [workspace.save])
+  const actionBusy = running || checking || mutating || chatting || hinting
+  const file = files.find((f) => f.path === activePath) || files[0]
+  const task =
+    session?.project.tasks.find((t) => t.id === taskId) ||
+    session?.project.tasks[0]
+  const report = task ? session?.last_verification[task.id] : undefined
+  const checkExecutionError = report?.execution_status === 'error'
+  const stale =
+    !!report &&
+    (report.content_hash !== session?.content_hash ||
+      workspace.dirtyPaths.size > 0)
+  const visibleTabs = Array.from(
+    new Set([...tabs, ...(file ? [file.path] : [])]),
+  ).filter((path) => files.some((f) => f.path === path))
+  const openFile = (path: string) => {
+    workspace.selectFile(path)
+    setTabs((prev) => [...new Set([...prev, path])])
+  }
+  const notifyError = (e: unknown) =>
+    workspace.setError(
+      e instanceof Error ? e.message : 'Something went wrong. Please retry.',
+    )
+  const loadHistory = async () => {
+    try {
+      setSnapshots(await apiFetch<Checkpoint[]>(`${workspace.base}/snapshots`))
+    } catch (e) {
+      notifyError(e)
     }
-  }, [projectId])
-
-  // Persist workspace state to PostgreSQL
-  const persistState = useCallback(
-    async (
-      nextFiles: WorkspaceFile[],
-      nextActiveFile: string,
-      nextActiveTask: string
-    ) => {
-      if (!projectId) return
-      setSyncStatus('saving')
-      try {
-        const updated = await apiFetch<WorkspaceSessionResponse>(
-          `/api/workspace/${projectId}/state`,
-          {
-            method: 'PUT',
-            body: JSON.stringify({
-              files: nextFiles,
-              active_file_path: nextActiveFile,
-              active_task_id: nextActiveTask,
-            }),
-          }
-        )
-        setSessionData(updated)
-        setDirtyPaths(new Set())
-        setSyncStatus('saved')
-      } catch (err) {
-        console.error('[Workspace Sync Error]:', err)
-        setSyncStatus('unsaved')
+  }
+  useEffect(() => {
+    const keyboard = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        void saveRef.current().catch(() => {})
+      }
+    }
+    window.addEventListener('keydown', keyboard)
+    return () => window.removeEventListener('keydown', keyboard)
+  }, [])
+  useEffect(
+    () => () => {
+      layoutCleanup.current?.()
+      if (session?.session_id) {
+        monacoRef.current?.editor
+          .getModels()
+          .forEach((model: { uri: { path: string }; dispose: () => void }) => {
+            if (model.uri.path.startsWith(`/${session.session_id}/`))
+              model.dispose()
+          })
       }
     },
-    [projectId]
+    [session?.session_id],
   )
-
-  const scheduleAutoSave = useCallback(
-    (
-      nextFiles: WorkspaceFile[],
-      nextActiveFile: string,
-      nextActiveTask: string
-    ) => {
-      setSyncStatus('unsaved')
-      if (saveTimerRef.current) {
-        window.clearTimeout(saveTimerRef.current)
-      }
-      saveTimerRef.current = window.setTimeout(() => {
-        void persistState(nextFiles, nextActiveFile, nextActiveTask)
-      }, 900)
-    },
-    [persistState]
-  )
-
-  const activeFile = useMemo(
-    () => files.find((f) => f.path === activeFilePath) || files[0] || null,
-    [files, activeFilePath]
-  )
-
-  const activeTask = useMemo(() => {
-    const tasks = sessionData?.project.tasks || []
-    return tasks.find((t) => t.id === activeTaskId) || tasks[0] || null
-  }, [sessionData, activeTaskId])
-
-  const handleSelectFile = (path: string) => {
-    if (!openTabs.includes(path)) {
-      setOpenTabs((prev) => [...prev, path])
+  const onMount: OnMount = (editor, monaco) => {
+    layoutCleanup.current?.()
+    hintDecoration.current = null
+    editorRef.current = editor
+    monacoRef.current = monaco
+    if (pendingHintLine.current?.path === file?.path) {
+      highlightHint(editor, pendingHintLine.current.line)
+      pendingHintLine.current = null
     }
-    setActiveFilePath(path)
-    void persistState(files, path, activeTaskId)
-  }
-
-  const handleCloseTab = (path: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (openTabs.length <= 1) return
-    const nextTabs = openTabs.filter((t) => t !== path)
-    setOpenTabs(nextTabs)
-    if (activeFilePath === path) {
-      const nextActive = nextTabs[nextTabs.length - 1]
-      setActiveFilePath(nextActive)
-      void persistState(files, nextActive, activeTaskId)
-    }
-  }
-
-  const handleSelectTask = (taskId: string) => {
-    setActiveTaskId(taskId)
-    void persistState(files, activeFilePath, taskId)
-  }
-
-  const handleEditorChange = (value: string | undefined) => {
-    if (!activeFile || activeFile.read_only) return
-    const newContent = value ?? ''
-    const nextFiles = files.map((f) =>
-      f.path === activeFile.path ? { ...f, content: newContent } : f
+    const cursorListener = editor.onDidChangeCursorPosition((e) =>
+      setCursor({ line: e.position.lineNumber, column: e.position.column }),
     )
-    setFiles(nextFiles)
-    setDirtyPaths((prev) => {
-      const copy = new Set(prev)
-      copy.add(activeFile.path)
-      return copy
-    })
-    scheduleAutoSave(nextFiles, activeFilePath, activeTaskId)
-  }
-
-  const handleEditorMount: OnMount = (editor, monaco) => {
-    editor.onDidChangeCursorPosition((e) => {
-      setCursorPos({
-        line: e.position.lineNumber,
-        column: e.position.column,
+    // Defer editor layout outside ResizeObserver delivery so resizing panels
+    // cannot create a synchronous observer/layout feedback loop.
+    let frame = 0
+    let previousWidth = 0
+    let previousHeight = 0
+    const container = editor.getDomNode()?.closest('.monaco-container')
+    const resize = () => {
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        const rect = container?.getBoundingClientRect()
+        if (!rect) return
+        const width = Math.floor(rect.width)
+        const height = Math.floor(rect.height)
+        if (
+          width > 0 &&
+          height > 0 &&
+          (width !== previousWidth || height !== previousHeight)
+        ) {
+          previousWidth = width
+          previousHeight = height
+          editor.layout({ width, height })
+        }
       })
-    })
-
-    // Ctrl+S / Cmd+S manual save command
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-      if (saveTimerRef.current) {
-        window.clearTimeout(saveTimerRef.current)
-      }
-      void persistState(files, activeFilePath, activeTaskId)
-    })
+    }
+    const observer = new ResizeObserver(resize)
+    if (container) observer.observe(container)
+    resize()
+    layoutCleanup.current = () => {
+      observer.disconnect()
+      window.cancelAnimationFrame(frame)
+      cursorListener.dispose()
+    }
   }
-
-  // File tree CRUD operations
-  const handleCreateFile = async (newPath: string) => {
-    if (!projectId) return
-    const updated = await apiFetch<WorkspaceSessionResponse>(
-      `/api/workspace/${projectId}/files`,
-      {
+  const run = async () => {
+    setRunning(true)
+    setBottom('output')
+    workspace.setError('')
+    try {
+      const saved = await workspace.save()
+      const result = await apiFetch<RuntimeResult>(`${workspace.base}/run`, {
         method: 'POST',
-        body: JSON.stringify({ path: newPath, content: '' }),
-      }
-    )
-    setSessionData(updated)
-    setFiles(updated.files)
-    setActiveFilePath(updated.active_file_path)
-    if (!openTabs.includes(updated.active_file_path)) {
-      setOpenTabs((prev) => [...prev, updated.active_file_path])
-    }
-  }
-
-  const handleRenameFile = async (oldPath: string, newPath: string) => {
-    if (!projectId) return
-    const updated = await apiFetch<WorkspaceSessionResponse>(
-      `/api/workspace/${projectId}/files/rename`,
-      {
-        method: 'PATCH',
-        body: JSON.stringify({ old_path: oldPath, new_path: newPath }),
-      }
-    )
-    setSessionData(updated)
-    setFiles(updated.files)
-    setActiveFilePath(updated.active_file_path)
-    setOpenTabs((prev) => prev.map((t) => (t === oldPath ? newPath : t)))
-  }
-
-  const handleDeleteFile = async (path: string) => {
-    if (!projectId) return
-    const updated = await apiFetch<WorkspaceSessionResponse>(
-      `/api/workspace/${projectId}/files?path=${encodeURIComponent(path)}`,
-      {
-        method: 'DELETE',
-      }
-    )
-    setSessionData(updated)
-    setFiles(updated.files)
-    setActiveFilePath(updated.active_file_path)
-    setOpenTabs((prev) => {
-      const remaining = prev.filter((t) => t !== path)
-      return remaining.length > 0 ? remaining : [updated.active_file_path]
-    })
-  }
-
-  const handleResetWorkspace = async () => {
-    if (!projectId) return
-    if (
-      !window.confirm(
-        'Reset all starter files back to their original code? (Your task progress and hints will be preserved.)'
-      )
-    ) {
-      return
-    }
-    const updated = await apiFetch<WorkspaceSessionResponse>(
-      `/api/workspace/${projectId}/reset`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ reset_progress: false }),
-      }
-    )
-    setSessionData(updated)
-    setFiles(updated.files)
-    setActiveFilePath(updated.active_file_path)
-    setDirtyPaths(new Set())
-    setSyncStatus('saved')
-  }
-
-  // Verification handler (calls backend /verify endpoint when wired in Step 5)
-  const handleRunAndVerify = async () => {
-    if (!projectId || !activeTask) return
-    setConsoleOpen(true)
-    setRunningVerify(true)
-
-    try {
-      // Save latest editor state first
-      await persistState(files, activeFilePath, activeTaskId)
-
-      const updated = await apiFetch<WorkspaceSessionResponse>(
-        `/api/workspace/${projectId}/verify`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            task_id: activeTask.id,
-            files,
-          }),
-        }
-      )
-      setSessionData(updated)
-    } catch (err) {
-      // Fallback report if Step 5 endpoint is not yet attached
-      const fallbackReport: TaskVerificationReport = {
-        task_id: activeTask.id,
-        passed_all: false,
-        sandbox_passed: false,
-        sandbox_output:
-          err instanceof Error
-            ? `Verification runner message: ${err.message}`
-            : 'Verification endpoint not yet active.',
-        execution_ms: 12,
-        criteria_results: activeTask.validation_criteria.map((c) => ({
-          criterion: c,
-          passed: false,
-          reason: 'Ready for Step 5 verification engine.',
-        })),
-        architectural_feedback:
-          'Step 5 will connect the Two-Layer Python Sandbox + NVIDIA NIM Evaluator to grade each criterion.',
-      }
-      setSessionData((prev) =>
-        prev
-          ? {
-              ...prev,
-              last_verification: {
-                ...prev.last_verification,
-                [activeTask.id]: fallbackReport,
-              },
-            }
-          : prev
-      )
+        body: JSON.stringify({ expected_revision: saved.revision }),
+      })
+      setRuntime(result)
+      if (result.preview_url) setBottom('preview')
+    } catch (e) {
+      notifyError(e)
     } finally {
-      setRunningVerify(false)
+      setRunning(false)
     }
   }
-
-  // AI Side Chat & Progressive Nudge handlers (connects to Step 6 endpoints)
-  const handleSendChatMessage = async (message: string) => {
-    if (!projectId || !activeTask) return
-    setSendingChat(true)
+  const stop = async () => {
     try {
-      await persistState(files, activeFilePath, activeTaskId)
-      const updated = await apiFetch<WorkspaceSessionResponse>(
-        `/api/workspace/${projectId}/chat`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            task_id: activeTask.id,
-            active_file_path: activeFilePath,
-            message,
-            files,
-          }),
-        }
+      await apiFetch(`${workspace.base}/run`, { method: 'DELETE' })
+      setRuntime((prev) =>
+        prev ? { ...prev, status: 'stopped', preview_url: undefined } : null,
       )
-      setSessionData(updated)
-    } catch (err) {
-      console.warn('[Chat API pending Step 6]:', err)
-    } finally {
-      setSendingChat(false)
+    } catch (e) {
+      notifyError(e)
     }
   }
-
-  const handleRequestHint = async () => {
-    if (!projectId || !activeTask) return
-    setRequestingHint(true)
+  const check = async () => {
+    if (!task) return
+    setChecking(true)
+    setBottom('checks')
+    workspace.setError('')
     try {
-      await persistState(files, activeFilePath, activeTaskId)
-      const updated = await apiFetch<WorkspaceSessionResponse>(
-        `/api/workspace/${projectId}/nudge`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            task_id: activeTask.id,
-            active_file_path: activeFilePath,
-            files,
-          }),
-        }
-      )
-      setSessionData(updated)
-    } catch (err) {
-      console.warn('[Nudge API pending Step 6]:', err)
+      await workspace.mutate('/verify', 'POST', { task_id: task.id })
+    } catch {
+      /* Error banner retains failure. */
     } finally {
-      setRequestingHint(false)
+      setChecking(false)
     }
   }
-
-  if (loading) {
+  if (!session || !task)
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-[#0b0c10] text-[#cdd6f4]">
-        <div className="flex items-center gap-3 text-sm">
-          <Loader2 className="h-5 w-5 animate-spin text-[#7aa2f7]" />
-          <span>Loading Nudge IDE Workspace...</span>
-        </div>
+      <div className="brief-loading">
+        {workspace.error ? (
+          <>
+            <p role="alert">{workspace.error}</p>
+            <Link to={`/projects/${projectId}`}>Back to project brief</Link>
+          </>
+        ) : (
+          <>
+            <Loader2 className="spin" /> Opening your workspace…
+          </>
+        )}
       </div>
     )
-  }
-
-  if (error || !sessionData || !activeTask) {
-    return (
-      <div className="flex h-screen w-full flex-col items-center justify-center bg-[#0b0c10] text-white px-6 text-center">
-        <p className="text-sm text-[#f38ba8] font-semibold">
-          {error || 'Workspace could not be initialized.'}
-        </p>
-        <Link
-          to="/projects"
-          className="mt-4 rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs hover:bg-white/10"
-        >
-          &larr; Return to Projects Hub
-        </Link>
-      </div>
-    )
-  }
-
-  const currentHintLevel = sessionData.hint_levels[activeTask.id] ?? 0
-  const currentVerification = sessionData.last_verification[activeTask.id]
-
+  const completed = workspace.dirtyPaths.size ? [] : session.completed_task_ids
+  const progress = Math.round(
+    (completed.length / session.project.tasks.length) * 100,
+  )
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0b0c10] text-[#cdd6f4]">
-      {/* 1. Top IDE Title Bar (42px) */}
-      <header className="flex h-[42px] shrink-0 items-center justify-between border-b border-white/[0.07] bg-[#0b0c10] px-3.5 select-none">
-        {/* Left: Brand + Project Switcher */}
-        <div className="flex items-center gap-3 min-w-0">
-          <Link
-            to="/projects"
-            title="Back to Projects Hub"
-            className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
+    <div className="workbench">
+      <header className="wb-topbar">
+        <Link
+          to={`/projects/${projectId}`}
+          className="nudge-wordmark"
+          onClick={(event) => {
+            if (
+              workspace.dirtyPaths.size &&
+              !window.confirm(
+                'You have unsaved edits. A local recovery copy is available. Leave this workspace?',
+              )
+            )
+              event.preventDefault()
+          }}
+        >
+          <Sparkles size={20} /> nudge
+        </Link>
+        <span className="topbar-divider" />
+        <Link className="project-location" to={`/projects/${projectId}`}>
+          <Code2 size={15} />
+          <span>{session.project.title}</span>
+          <ChevronDown size={13} />
+        </Link>
+        <span className="workspace-label">WORKSPACE</span>
+        <div className="topbar-actions">
+          <span className={`sync-state ${sync}`}>
+            <CloudCheck size={14} />
+            {sync === 'saved'
+              ? 'All changes saved'
+              : sync === 'saving'
+                ? 'Saving…'
+                : sync === 'conflict'
+                  ? 'Save conflict'
+                  : 'Unsaved changes'}
+          </span>
+          <button
+            className="icon-button"
+            title="Export project as ZIP"
+            aria-label="Export project as ZIP"
+            onClick={() => void workspace.download().catch(notifyError)}
           >
-            <svg
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              className="h-4 w-4 text-[#ffb86c]"
+            <Download size={17} />
+          </button>
+          <button
+            className="secondary-button check-button"
+            aria-label="Check task"
+            disabled={actionBusy || sync === 'conflict'}
+            onClick={() => void check()}
+          >
+            {checking ? (
+              <Loader2 size={15} className="spin" />
+            ) : (
+              <ShieldCheck size={16} />
+            )}
+            <span>Check task</span>
+          </button>
+          {runtime?.status === 'running' ? (
+            <button
+              className="primary-button run-button"
+              onClick={() => void stop()}
             >
-              <path d="M12 1.5C12.7 7.1 16.9 11.3 22.5 12C16.9 12.7 12.7 16.9 12 22.5C11.3 16.9 7.1 12.7 1.5 12C7.1 11.3 11.3 7.1 12 1.5Z" />
-            </svg>
-            <span className="font-sans text-sm font-semibold tracking-tight">
-              Nudge
-            </span>
-          </Link>
-
-          <span className="text-white/20">/</span>
-
-          {/* Project Switcher Dropdown */}
-          <div className="relative flex items-center gap-1.5">
-            <FolderGit2 className="h-3.5 w-3.5 text-[#7aa2f7]" />
-            <select
-              value={sessionData.project.id}
-              onChange={(e) => navigate(`/workspace/${e.target.value}`)}
-              className="rounded-lg border border-white/[0.08] bg-[#14151f] px-2.5 py-1 text-xs font-medium text-white focus:border-[#7aa2f7] focus:outline-none cursor-pointer"
+              <Square size={13} fill="currentColor" />
+              Stop
+            </button>
+          ) : (
+            <button
+              className="primary-button run-button"
+              disabled={actionBusy || sync === 'conflict'}
+              onClick={() => void run()}
             >
-              {allProjects.length > 0 ? (
-                allProjects.map((p) => (
-                  <option key={p.id} value={p.id} className="bg-[#14151f]">
-                    {p.title}
-                  </option>
-                ))
+              {running ? (
+                <Loader2 className="spin" size={15} />
               ) : (
-                <option value={sessionData.project.id}>
-                  {sessionData.project.title}
-                </option>
+                <Play size={14} fill="currentColor" />
               )}
-            </select>
-          </div>
-        </div>
-
-        {/* Right: Sync Status + Reset + Run & Verify */}
-        <div className="flex items-center gap-2.5">
-          {/* Sync Pill */}
-          <div className="hidden md:flex items-center gap-1.5 rounded-md border border-white/[0.06] bg-[#12131c] px-2.5 py-1 text-[11px] text-white/60">
-            {syncStatus === 'saving' ? (
-              <>
-                <Loader2 className="h-3 w-3 animate-spin text-[#7aa2f7]" />
-                <span>Saving...</span>
-              </>
-            ) : syncStatus === 'unsaved' ? (
-              <>
-                <span className="h-2 w-2 rounded-full bg-[#ffb86c]" />
-                <span>Unsaved edits</span>
-              </>
-            ) : (
-              <>
-                <CloudCheck className="h-3.5 w-3.5 text-[#a6e3a1]" />
-                <span>Synced</span>
-              </>
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => void handleResetWorkspace()}
-            title="Reset files to starter code"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-[#14151f] px-2.5 py-1 text-xs font-medium text-white/75 hover:bg-white/[0.08] hover:text-white transition-colors cursor-pointer"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Reset</span>
-          </button>
-
-          <button
-            type="button"
-            disabled={runningVerify}
-            onClick={() => void handleRunAndVerify()}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-[#a6e3a1] px-3 py-1 text-xs font-semibold text-[#0b0c10] shadow-[0_0_20px_rgba(166,227,161,0.25)] transition-all hover:bg-[#a6e3a1]/90 disabled:opacity-50 cursor-pointer"
-          >
-            {runningVerify ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Play className="h-3.5 w-3.5 fill-current" />
-            )}
-            <span>Run &amp; Verify</span>
-          </button>
+              Run
+            </button>
+          )}
         </div>
       </header>
-
-      {/* 2. Main 3-Column Resizable IDE Body */}
-      <div className="flex-1 min-h-0">
-        <Group orientation="horizontal" className="h-full w-full">
-          {/* Left Panel: File Explorer */}
-          <Panel
-            id="explorer-panel"
-            defaultSize="18%"
-            minSize="13%"
-            maxSize="30%"
-          >
-            <FileExplorer
-              projectId={sessionData.project.id}
-              files={files}
-              activeFilePath={activeFile?.path || ''}
-              dirtyPaths={dirtyPaths}
-              onSelectFile={handleSelectFile}
-              onCreateFile={handleCreateFile}
-              onRenameFile={handleRenameFile}
-              onDeleteFile={handleDeleteFile}
-            />
-          </Panel>
-
-          <Separator className="w-[1px] bg-white/[0.07] hover:bg-[#7aa2f7] transition-colors" />
-
-          {/* Center Panel: Compact Task Header + Tabbed Monaco Editor + Bottom Console */}
-          <Panel id="editor-panel" defaultSize="54%" minSize="35%">
-            <div className="flex h-full flex-col bg-[#14151f] min-w-0">
-              {/* Compact Task Bar directly above Editor */}
-              <TaskHeaderBar
-                tasks={sessionData.project.tasks}
-                activeTask={activeTask}
-                completedTaskIds={sessionData.completed_task_ids}
-                verification={currentVerification}
-                aiFailureMode={sessionData.project.ai_failure_mode}
-                onSelectTask={handleSelectTask}
-                onSelectTargetFile={handleSelectFile}
-              />
-
-              {/* Multi-File Editor Tab Bar */}
-              <div className="flex h-9 shrink-0 items-center overflow-x-auto border-b border-white/[0.06] bg-[#11121a] select-none">
-                {openTabs.map((tabPath) => {
-                  const fileObj = files.find((f) => f.path === tabPath)
-                  if (!fileObj) return null
-                  const isActive = fileObj.path === activeFile?.path
-                  const isDirty = dirtyPaths.has(fileObj.path)
-
-                  return (
-                    <div
-                      key={fileObj.path}
-                      onClick={() => handleSelectFile(fileObj.path)}
-                      className={`group flex h-full items-center gap-2 border-r border-white/[0.06] px-3 text-xs transition-colors cursor-pointer ${
-                        isActive
-                          ? 'bg-[#14151f] text-white border-t-2 border-t-[#7aa2f7]'
-                          : 'bg-[#11121a] text-white/55 hover:bg-[#14151f]/60 hover:text-white/85 border-t-2 border-t-transparent'
-                      }`}
-                    >
-                      {getFileIcon(fileObj.path)}
-                      <span className="font-mono text-[12px]">
-                        {fileObj.path}
-                      </span>
-                      {fileObj.read_only && (
-                        <Lock className="h-3 w-3 text-white/35" />
-                      )}
-                      {isDirty && (
-                        <span className="h-2 w-2 rounded-full bg-[#ffb86c]" />
-                      )}
-                      {openTabs.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={(e) => handleCloseTab(fileObj.path, e)}
-                          className="ml-1 rounded p-0.5 text-white/35 opacity-0 group-hover:opacity-100 hover:bg-white/10 hover:text-white transition-all cursor-pointer"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-
-              {/* Breadcrumb & Read-Only Indicator Bar */}
-              {activeFile && (
-                <div className="flex h-6 shrink-0 items-center justify-between border-b border-white/[0.04] bg-[#14151f] px-3.5 text-[11px] text-white/45 select-none">
-                  <div className="flex items-center gap-1 font-mono">
-                    <span>{sessionData.project.id}</span>
-                    <ChevronRight className="h-3 w-3 text-white/30" />
-                    <span className="text-white/80">{activeFile.path}</span>
-                  </div>
-                  {activeFile.read_only && (
-                    <span className="inline-flex items-center gap-1 rounded bg-white/[0.06] px-1.5 py-0.2 font-mono text-[10px] text-[#cba6f7]">
-                      <Lock className="h-2.5 w-2.5" />
-                      READ-ONLY REFERENCE
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {/* Monaco Code Editor */}
-              <div className="flex-1 min-h-0 relative">
-                {activeFile ? (
-                  <Editor
-                    height="100%"
-                    path={activeFile.path}
-                    language={activeFile.language}
-                    value={activeFile.content}
-                    theme={NUDGE_MONACO_THEME}
-                    beforeMount={registerNudgeMonacoTheme}
-                    onMount={handleEditorMount}
-                    onChange={handleEditorChange}
-                    options={{
-                      readOnly: activeFile.read_only,
-                      fontSize: 13.5,
-                      fontFamily:
-                        "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                      fontLigatures: true,
-                      lineHeight: 21,
-                      minimap: { enabled: false },
-                      scrollBeyondLastLine: false,
-                      smoothScrolling: true,
-                      cursorBlinking: 'smooth',
-                      cursorSmoothCaretAnimation: 'on',
-                      renderLineHighlight: 'all',
-                      padding: { top: 14, bottom: 14 },
-                      bracketPairColorization: { enabled: true },
-                      automaticLayout: true,
-                      tabSize: 4,
-                    }}
-                  />
-                ) : null}
-              </div>
-
-              {/* Collapsible Bottom Console Drawer */}
-              <ConsoleDrawer
-                open={consoleOpen}
-                running={runningVerify}
-                report={currentVerification}
-                onToggle={() => setConsoleOpen(false)}
-                onClear={() => {
-                  setSessionData((prev) => {
-                    if (!prev) return prev
-                    const nextVerif = { ...prev.last_verification }
-                    delete nextVerif[activeTask.id]
-                    return { ...prev, last_verification: nextVerif }
-                  })
-                }}
-              />
-            </div>
-          </Panel>
-
-          <Separator className="w-[1px] bg-white/[0.07] hover:bg-[#7aa2f7] transition-colors" />
-
-          {/* Right Panel: AI Side Chat & 4-Step Progressive Hints */}
-          <Panel
-            id="ai-chat-panel"
-            defaultSize="28%"
-            minSize="22%"
-            maxSize="42%"
-          >
-            <AiSideChat
-              activeFilePath={activeFile?.path || ''}
-              activeTask={activeTask}
-              hintLevel={currentHintLevel}
-              messages={sessionData.chat_messages}
-              sendingChat={sendingChat}
-              requestingHint={requestingHint}
-              onSendMessage={handleSendChatMessage}
-              onRequestHint={handleRequestHint}
-            />
-          </Panel>
-        </Group>
-      </div>
-
-      {/* 3. Bottom IDE Status Bar (24px) */}
-      <footer className="flex h-6 shrink-0 items-center justify-between border-t border-white/[0.07] bg-[#0b0c10] px-3 font-mono text-[11px] text-white/55 select-none">
-        <div className="flex items-center gap-4">
-          <span className="inline-flex items-center gap-1.5 text-[#a6e3a1]">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#a6e3a1]" />
-            PostgreSQL Connected
-          </span>
-
-          <span className="inline-flex items-center gap-1 text-white/70">
-            <CheckCircle2 className="h-3 w-3 text-[#7aa2f7]" />
-            Tasks: {sessionData.completed_task_ids.length}/
-            {sessionData.project.tasks.length} Passed
-          </span>
-
+      {workspace.error && (
+        <div className="wb-banner error" role="alert">
+          <span>{workspace.error}</span>
+          {sync === 'conflict' && (
+            <button onClick={() => window.location.reload()}>
+              Reload saved version
+            </button>
+          )}
           <button
-            type="button"
-            onClick={() => setConsoleOpen((prev) => !prev)}
-            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.2 transition-colors cursor-pointer ${
-              consoleOpen
-                ? 'bg-[#7aa2f7]/20 text-[#7aa2f7]'
-                : 'hover:text-white'
-            }`}
+            aria-label="Dismiss error"
+            onClick={() => workspace.setError('')}
           >
-            <Terminal className="h-3 w-3" />
-            <span>Console</span>
+            <X size={15} />
           </button>
         </div>
-
-        <div className="flex items-center gap-4">
+      )}
+      {workspace.draft && (
+        <div className="wb-banner">
+          <History size={16} />
+          <span>Unsaved work was recovered from this browser.</span>
+          <button onClick={workspace.recover}>Restore local edits</button>
+          <button onClick={workspace.discardDraft}>Keep server version</button>
+        </div>
+      )}
+      {notice && (
+        <div className="wb-banner success">
+          <CheckCircle2 size={16} />
+          <span>{notice}</span>
+          <button
+            onClick={() => setNotice('')}
+            aria-label="Dismiss notification"
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
+      <div className="wb-body">
+        <nav className="activity-bar" aria-label="Workspace views">
+          {[
+            { id: 'files', icon: Files, label: 'Explorer' },
+            { id: 'tasks', icon: BookOpen, label: 'Task roadmap' },
+            { id: 'history', icon: History, label: 'Checkpoints' },
+          ].map(({ id, icon: Icon, label }) => (
+            <button
+              key={id}
+              className={explorer && left === id ? 'active' : ''}
+              title={label}
+              aria-label={label}
+              aria-pressed={explorer && left === id}
+              onClick={() => {
+                setLeft(id as typeof left)
+                showExplorer()
+                if (id === 'history') void loadHistory()
+              }}
+            >
+              <Icon size={21} />
+            </button>
+          ))}
+          <div className="activity-spacer" />
+          <button
+            title="Project brief"
+            aria-label="View project brief"
+            onClick={() =>
+              window.open(`/projects/${projectId}`, '_blank', 'noopener')
+            }
+          >
+            <GraduationIcon />
+          </button>
+          <button
+            className={assistant ? 'active' : ''}
+            title="Toggle mentor"
+            aria-label="Toggle AI mentor"
+            aria-pressed={assistant}
+            onClick={() => toggleMentor()}
+          >
+            <Sparkles size={21} />
+          </button>
+        </nav>
+        <Group orientation="horizontal" className="wb-panels">
+          {explorer && (
+            <>
+              <Panel
+                id="explorer"
+                defaultSize="19%"
+                minSize="170px"
+                maxSize="32%"
+              >
+                <aside className="wb-explorer">
+                  <div className="panel-title">
+                    <span>
+                      {left === 'files'
+                        ? 'EXPLORER'
+                        : left === 'tasks'
+                          ? 'BUILD PLAN'
+                          : 'CHECKPOINTS'}
+                    </span>
+                    <button
+                      className="icon-button"
+                      title="Hide sidebar"
+                      aria-label="Hide sidebar"
+                      onClick={() => setExplorer(false)}
+                    >
+                      <PanelLeftClose size={15} />
+                    </button>
+                  </div>
+                  {left === 'files' ? (
+                    <>
+                      <label className="file-search">
+                        <Search size={14} />
+                        <input
+                          placeholder="Find a file…"
+                          aria-label="Filter files"
+                          value={filter}
+                          onChange={(e) => setFilter(e.target.value)}
+                        />
+                      </label>
+                      <FileExplorer
+                        projectId={projectId}
+                        files={files.filter((f) =>
+                          f.path.toLowerCase().includes(filter.toLowerCase()),
+                        )}
+                        activeFilePath={file?.path || ''}
+                        dirtyPaths={workspace.dirtyPaths}
+                        taskFilePaths={task.task_files.map((item) => item.path)}
+                        onSelectFile={openFile}
+                        onCreateFile={async (path) => {
+                          await workspace.mutate(
+                            '/files',
+                            'POST',
+                            { path },
+                            true,
+                          )
+                        }}
+                        onRenameFile={async (old_path, new_path) => {
+                          await workspace.mutate(
+                            '/files/rename',
+                            'PATCH',
+                            { old_path, new_path },
+                            true,
+                          )
+                          setTabs((prev) =>
+                            prev.map((p) => (p === old_path ? new_path : p)),
+                          )
+                        }}
+                        onDeleteFile={async (path) => {
+                          await workspace.mutate(
+                            `/files?path=${encodeURIComponent(path)}`,
+                            'DELETE',
+                            {},
+                            true,
+                          )
+                        }}
+                      />
+                    </>
+                  ) : left === 'tasks' ? (
+                    <div className="roadmap-list">
+                      <div className="roadmap-summary">
+                        <span>Your progress</span>
+                        <strong>
+                          {completed.length}/{session.project.tasks.length}
+                        </strong>
+                        <div className="progress-track">
+                          <div style={{ width: `${progress}%` }} />
+                        </div>
+                      </div>
+                      {session.project.tasks.map((t) => (
+                        <button
+                          key={t.id}
+                          disabled={!session.unlocked_task_ids.includes(t.id)}
+                          title={
+                            !session.unlocked_task_ids.includes(t.id)
+                              ? 'Complete the previous task to unlock this one'
+                              : t.title
+                          }
+                          className={t.id === task.id ? 'selected' : ''}
+                          onClick={() => {
+                            workspace.selectTask(t.id)
+                            openFile(t.target_file)
+                          }}
+                        >
+                          {completed.includes(t.id) ? (
+                            <CheckCircle2 size={17} className="green-text" />
+                          ) : (
+                            <span className="task-number">{t.order}</span>
+                          )}
+                          <span>
+                            {t.order}. {t.title}
+                            <small>
+                              {session.unlocked_task_ids.includes(t.id)
+                                ? `${t.validation_criteria.length} checks`
+                                : 'Locked — finish the previous task'}
+                            </small>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="checkpoint-list">
+                      <p>
+                        Save a point you can return to. The latest 20
+                        checkpoints are kept.
+                      </p>
+                      <button
+                        className="secondary-button"
+                        disabled={actionBusy}
+                        onClick={() =>
+                          void workspace
+                            .mutate('/snapshots', 'POST')
+                            .then(() => {
+                              setNotice('Checkpoint saved.')
+                              void loadHistory()
+                            })
+                            .catch(() => {})
+                        }
+                      >
+                        <Save size={15} />
+                        Save checkpoint
+                      </button>
+                      {snapshots.map((item) => (
+                        <article key={item.id}>
+                          <History size={15} />
+                          <div>
+                            <strong>{item.label}</strong>
+                            <small>
+                              Revision {item.revision} ·{' '}
+                              {new Date(item.created_at).toLocaleDateString()}
+                            </small>
+                            <button
+                              onClick={() =>
+                                setConfirm({
+                                  label: 'Restore checkpoint',
+                                  description:
+                                    'Your current files will be checkpointed before restoring this version.',
+                                  action: async () => {
+                                    await workspace.mutate(
+                                      `/snapshots/${item.id}/restore`,
+                                      'POST',
+                                      {},
+                                      true,
+                                    )
+                                    await loadHistory()
+                                  },
+                                })
+                              }
+                            >
+                              Restore
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                  <div className="explorer-footer">
+                    <span>
+                      <LockKeyhole size={13} /> Private workspace
+                    </span>
+                    <span>v{session.project.version.slice(0, 7)}</span>
+                  </div>
+                </aside>
+              </Panel>
+              <Separator className="wb-separator" />
+            </>
+          )}
+          <Panel
+            id="editor"
+            defaultSize={assistant ? '53%' : '81%'}
+            minSize="280px"
+          >
+            <main className="wb-editor-column">
+              <div
+                className="editor-tabs"
+                role="tablist"
+                aria-label="Open files"
+              >
+                {!explorer && (
+                  <button
+                    className="icon-button"
+                    title="Show explorer"
+                    aria-label="Show explorer"
+                    onClick={() => showExplorer()}
+                  >
+                    <LayoutPanelLeft size={16} />
+                  </button>
+                )}
+                {visibleTabs.map((path) => (
+                  <div
+                    className={`editor-tab ${path === file?.path ? 'active' : ''}`}
+                    key={path}
+                  >
+                    <button
+                      role="tab"
+                      aria-selected={path === file?.path}
+                      onClick={() => openFile(path)}
+                    >
+                      {getFileIcon(path)}
+                      <span>{path.split('/').pop()}</span>
+                      {workspace.dirtyPaths.has(path) && (
+                        <span className="dirty-dot" />
+                      )}
+                    </button>
+                    <button
+                      className="tab-close"
+                      aria-label={`Close ${path}`}
+                      onClick={() => {
+                        const next = visibleTabs.filter((p) => p !== path)
+                        if (!next.length) return
+                        setTabs(next)
+                        if (activePath === path)
+                          workspace.selectFile(next[next.length - 1])
+                      }}
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                ))}
+                <div className="tabs-spacer" />
+                <button
+                  className="icon-button"
+                  title="Toggle mentor"
+                  aria-label="Toggle mentor panel"
+                  onClick={() => toggleMentor()}
+                >
+                  <MessageSquare size={16} />
+                </button>
+              </div>
+              <div className="editor-breadcrumb">
+                <span>{projectId}</span>
+                <ChevronRight size={13} />
+                <span>{file?.path}</span>
+                {file?.read_only && (
+                  <span className="readonly-label">
+                    <LockKeyhole size={11} />
+                    Read only
+                  </span>
+                )}
+                <button
+                  title="Focus editor"
+                  aria-label="Focus editor"
+                  onClick={() => editorRef.current?.focus()}
+                >
+                  <Maximize2 size={13} />
+                </button>
+              </div>
+              <div className="task-ribbon">
+                <span className="task-ribbon-icon">
+                  <BookOpen size={16} />
+                </span>
+                <div>
+                  <small>
+                    CURRENT TASK · {task.order} OF{' '}
+                    {session.project.tasks.length}
+                  </small>
+                  <strong>{task.title}</strong>
+                </div>
+                <button
+                  onClick={() => {
+                    setLeft('tasks')
+                    showExplorer()
+                  }}
+                >
+                  View plan
+                  <ChevronRight size={13} />
+                </button>
+              </div>
+              <Group orientation="vertical" className="editor-split">
+                <Panel id="code" defaultSize="65%" minSize="140px">
+                  <div className="monaco-container">
+                    <Editor
+                      key={`${session.session_id}:${file?.path}`}
+                      keepCurrentModel
+                      height="100%"
+                      path={`file:///${session.session_id}/${file?.path.split('/').map(encodeURIComponent).join('/')}`}
+                      language={file?.language}
+                      value={file?.content}
+                      theme={NUDGE_MONACO_THEME}
+                      beforeMount={registerNudgeMonacoTheme}
+                      onMount={onMount}
+                      onChange={(value) => {
+                        if (
+                          file &&
+                          editorRef.current?.getModel()?.uri.path ===
+                            `/${session.session_id}/${file.path}`
+                        ) {
+                          workspace.edit(file.path, value ?? '')
+                        }
+                      }}
+                      options={{
+                        readOnly: !!file?.read_only || mutating,
+                        fontSize: 14,
+                        fontFamily: "'JetBrains Mono', Consolas, monospace",
+                        lineHeight: 23,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        padding: { top: 20 },
+                        automaticLayout: false,
+                        tabSize: 4,
+                        renderLineHighlight: 'gutter',
+                        smoothScrolling: true,
+                      }}
+                    />
+                  </div>
+                </Panel>
+                {bottom && (
+                  <>
+                    <Separator className="wb-horizontal-separator" />
+                    <Panel id="output" defaultSize="35%" minSize="100px">
+                      <section className="output-panel">
+                        <div
+                          className="output-tabs"
+                          role="tablist"
+                          aria-label="Run results"
+                        >
+                          {(['output', 'checks', 'preview'] as const).map(
+                            (view) => (
+                              <button
+                                role="tab"
+                                aria-selected={bottom === view}
+                                className={bottom === view ? 'active' : ''}
+                                key={view}
+                                onClick={() => setBottom(view)}
+                              >
+                                {view === 'output' ? (
+                                  <Terminal size={14} />
+                                ) : view === 'checks' ? (
+                                  <ShieldCheck size={14} />
+                                ) : (
+                                  <ExternalLink size={14} />
+                                )}
+                                {view === 'output'
+                                  ? 'Output'
+                                  : view === 'checks'
+                                    ? 'Task checks'
+                                    : 'Preview'}
+                                {view === 'checks' && report && (
+                                  <span>
+                                    {checkExecutionError ? 'No verdict' : <>{
+                                      report.criteria_results.filter(
+                                        (c) => c.passed,
+                                      ).length
+                                    }
+                                    /{task.validation_criteria.length}</>}
+                                  </span>
+                                )}
+                              </button>
+                            ),
+                          )}
+                          <span className="tabs-spacer" />
+                          <button
+                            className="icon-button"
+                            aria-label="Hide output panel"
+                            onClick={() => setBottom(null)}
+                          >
+                            <X size={15} />
+                          </button>
+                        </div>
+                        <div
+                          className={`output-content ${bottom === 'preview' ? 'preview-content' : ''}`}
+                        >
+                          {bottom === 'output' ? (
+                            running ? (
+                              <div className="output-empty">
+                                <Loader2 className="spin" size={20} />
+                                <p>Starting your isolated runtime…</p>
+                              </div>
+                            ) : runtime ? (
+                              <>
+                                <div className="run-meta">
+                                  <span>Revision {runtime.revision}</span>
+                                  <span>
+                                    {runtime.status}
+                                    {runtime.exit_code != null
+                                      ? ` · exit ${runtime.exit_code}`
+                                      : ''}
+                                  </span>
+                                  {runtime.revision !== session.revision && (
+                                    <span className="amber-text">
+                                      Newer edits are saved. Run again to
+                                      update.
+                                    </span>
+                                  )}
+                                </div>
+                                <pre>
+                                  {runtime.output ||
+                                    'Application finished without console output.'}
+                                </pre>
+                              </>
+                            ) : (
+                              <div className="output-empty">
+                                <Terminal size={22} />
+                                <p>Your application output appears here.</p>
+                                <span>
+                                  Run your code to see it in action. Check task
+                                  to test acceptance criteria.
+                                </span>
+                              </div>
+                            )
+                          ) : bottom === 'checks' ? (
+                            checking ? (
+                              <div className="output-empty">
+                                <Loader2 className="spin" size={20} />
+                                <p>Checking your implementation…</p>
+                              </div>
+                            ) : report ? (
+                              <>
+                                <div className="run-meta">
+                                  <span
+                                    className={
+                                      stale || checkExecutionError
+                                        ? 'amber-text'
+                                        : report.passed_all
+                                          ? 'green-text'
+                                          : ''
+                                    }
+                                  >
+                                    {stale
+                                      ? 'Results from an earlier code version'
+                                      : checkExecutionError
+                                        ? 'Checks could not complete — no verdict yet'
+                                      : report.passed_all
+                                        ? 'All acceptance checks passed'
+                                        : 'Keep going — some checks need work'}
+                                  </span>
+                                  <span>{report.execution_ms} ms</span>
+                                </div>
+                                {report.criteria_results.map((c) => (
+                                  <div
+                                    className={`criterion ${checkExecutionError ? '' : c.passed ? 'pass' : 'fail'}`}
+                                    key={c.criterion}
+                                  >
+                                    {c.passed && !checkExecutionError ? (
+                                      <CheckCircle2 size={16} />
+                                    ) : (
+                                      <Circle size={16} />
+                                    )}
+                                    <div>
+                                      <strong>{c.criterion}</strong>
+                                      <p>{checkExecutionError ? 'Not evaluated: the checker could not complete.' : c.reason}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                                <div className="review-note">
+                                  <Sparkles size={15} />
+                                  {report.architectural_feedback}
+                                </div>
+                                <details>
+                                  <summary>Execution logs</summary>
+                                  <pre>{report.sandbox_output}</pre>
+                                </details>
+                              </>
+                            ) : (
+                              <div className="output-empty">
+                                <ShieldCheck size={24} />
+                                <p>No checks run yet.</p>
+                                <span>
+                                  Build your solution, then choose Check task.
+                                </span>
+                              </div>
+                            )
+                          ) : runtime?.status === 'running' &&
+                            runtime.preview_url ? (
+                            <>
+                              <div className="preview-address">
+                                <button
+                                  className="preview-expand"
+                                  aria-label="Expand application preview"
+                                  title="Expand preview"
+                                  onClick={() => setPreviewExpanded(true)}
+                                >
+                                  <Maximize2 size={13} />
+                                </button>
+                                <LockKeyhole size={12} />
+                                <span>
+                                  Isolated preview · revision {runtime.revision}
+                                </span>
+                                <button
+                                  onClick={() => {
+                                    const frame = document.getElementById(
+                                      'application-preview',
+                                    ) as HTMLIFrameElement | null
+                                    if (frame) {
+                                      const url = frame.getAttribute('src')
+                                      if (url) frame.setAttribute('src', url)
+                                    }
+                                  }}
+                                  aria-label="Refresh preview"
+                                >
+                                  <RotateCcw size={13} />
+                                </button>
+                              </div>
+                              <iframe
+                                id="application-preview"
+                                title="Your running application"
+                                src={`${API_BASE_URL}${runtime.preview_url}`}
+                                sandbox="allow-scripts allow-forms"
+                                referrerPolicy="no-referrer"
+                              />
+                            </>
+                          ) : (
+                            <div className="output-empty">
+                              <Code2 size={24} />
+                              <p>
+                                {session.project.runtime.mode === 'web'
+                                  ? 'Your application, brought to life.'
+                                  : 'This project runs in the console.'}
+                              </p>
+                              <span>
+                                {session.project.runtime.mode === 'web'
+                                  ? 'Choose Run to start an interactive preview.'
+                                  : 'Choose Run, then open Output to inspect the results.'}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </section>
+                    </Panel>
+                  </>
+                )}
+              </Group>
+            </main>
+          </Panel>
+          {assistant && (
+            <>
+              <Separator className="wb-separator" />
+              <Panel
+                id="mentor"
+                defaultSize="28%"
+                minSize="270px"
+                maxSize="45%"
+              >
+                <aside className="mentor-panel">
+                  <div className="mentor-panel-heading">
+                    <Sparkles size={17} />
+                    <strong>Your build companion</strong>
+                    <button
+                      className="icon-button"
+                      aria-label="Hide mentor panel"
+                      onClick={() => setAssistant(false)}
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                  <div
+                    className="mentor-view-tabs"
+                    role="tablist"
+                    aria-label="Companion view"
+                  >
+                    <button
+                      role="tab"
+                      aria-selected={sideView === 'task'}
+                      className={sideView === 'task' ? 'active' : ''}
+                      onClick={() => setSideView('task')}
+                    >
+                      Task brief
+                    </button>
+                    <button
+                      role="tab"
+                      aria-selected={sideView === 'mentor'}
+                      className={sideView === 'mentor' ? 'active' : ''}
+                      onClick={() => setSideView('mentor')}
+                    >
+                      <MessageSquare size={13} /> AI mentor
+                    </button>
+                  </div>
+                  {sideView === 'task' && (
+                    <>
+                      <details className="task-brief-panel" open>
+                        <summary>
+                          <span>
+                            <BookOpen size={15} />
+                            {task.title}
+                          </span>
+                          <ChevronDown size={14} />
+                        </summary>
+                        <div className="markdown-content">
+                          <p className="task-objective">{task.objective}</p>
+                          {task.concept_markdown && <Link
+                            className="learn-concept-link"
+                            to={`/projects/${session.project.id}/tasks/${task.id}/learn`}
+                            target="_blank" rel="noopener noreferrer"
+                          ><BookOpen size={16} /> Learn the concept <ExternalLink size={14} /><span className="sr-only"> (opens in a new tab)</span></Link>}
+                          {task.estimated_time && <small className="phase-roadmap-meta">Estimated build time: {task.estimated_time}</small>}
+                          <section
+                            className="task-files"
+                            aria-label="Files for this task"
+                          >
+                            <h4>Files for this task</h4>
+                            <p>
+                              Open a file below. Edit the marked file and use
+                              the others to understand how it fits together.
+                            </p>
+                            <div>
+                              {task.task_files.map((item) => (
+                                <button
+                                  key={item.path}
+                                  type="button"
+                                  className={
+                                    item.path === file?.path ? 'active' : ''
+                                  }
+                                  disabled={
+                                    !files.some(
+                                      (entry) => entry.path === item.path,
+                                    )
+                                  }
+                                  onClick={() => openFile(item.path)}
+                                  aria-label={`Open ${item.path} — ${item.purpose === 'edit' ? 'edit this file' : 'read for context'}`}
+                                >
+                                  {getFileIcon(item.path)}
+                                  <code>{item.path}</code>
+                                  <small>
+                                    {item.purpose === 'edit' ? 'Edit' : 'Read'}
+                                  </small>
+                                </button>
+                              ))}
+                            </div>
+                          </section>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {task.instructions}
+                          </ReactMarkdown>
+                          <h4>Acceptance criteria</h4>
+                          <ul className="acceptance-list">
+                            {task.validation_criteria.map((c, index) => (
+                              <li key={c}>
+                                {!stale &&
+                                report?.criteria_results[index]?.passed ? (
+                                  <CheckCircle2
+                                    size={15}
+                                    className="green-text"
+                                  />
+                                ) : (
+                                  <Circle size={15} />
+                                )}
+                                <span>{c}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </details>
+                      <div className="task-help">
+                        <Lightbulb size={17} />
+                        <p>
+                          Stuck on a step?
+                          <span>
+                            Your mentor can help you reason through it.
+                          </span>
+                        </p>
+                        <button onClick={() => setSideView('mentor')}>
+                          Ask Nudge
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {sideView === 'mentor' && (
+                    <AiSideChat
+                      activeFilePath={file?.path || ''}
+                      activeTask={task}
+                      hintLevel={session.hint_levels[task.id] || 0}
+                      messages={session.chat_messages.filter(
+                        (m) => !m.task_id || m.task_id === task.id,
+                      )}
+                      sendingChat={chatting}
+                      requestingHint={hinting}
+                      streamingText={
+                        workspace.streamingReply?.taskId === task.id
+                          ? workspace.streamingReply.text
+                          : ''
+                      }
+                      onRevealCode={(path, line) => {
+                        const target = files.find((item) => item.path === path)
+                        if (
+                          !target ||
+                          line > target.content.split('\n').length
+                        ) {
+                          setNotice(
+                            'That hint refers to a line unavailable in the current files. Ask for an updated hint.',
+                          )
+                          return
+                        }
+                        if (file?.path === path && editorRef.current) {
+                          highlightHint(editorRef.current, line)
+                        } else {
+                          pendingHintLine.current = { path, line }
+                          openFile(path)
+                        }
+                      }}
+                      onSendMessage={async (message) => {
+                        setChatting(true)
+                        try {
+                          await workspace.streamMentor('/chat', {
+                            task_id: task.id,
+                            active_file_path: activePath,
+                            message,
+                          })
+                        } finally {
+                          setChatting(false)
+                        }
+                      }}
+                      onRequestHint={async () => {
+                        setHinting(true)
+                        try {
+                          await workspace.streamMentor('/nudge', {
+                            task_id: task.id,
+                            active_file_path: activePath,
+                          })
+                        } finally {
+                          setHinting(false)
+                        }
+                      }}
+                    />
+                  )}
+                </aside>
+              </Panel>
+            </>
+          )}
+        </Group>
+      </div>
+      <footer className="wb-statusbar">
+        <div>
           <span>
-            Ln {cursorPos.line}, Col {cursorPos.column}
+            <Code2 size={13} />
+            {session.project.category}
           </span>
-          <span className="hidden sm:inline">UTF-8</span>
-          <span className="uppercase text-[#cba6f7]">
-            {activeFile?.language || 'python'}
+          <button
+            onClick={() => {
+              setLeft('tasks')
+              showExplorer()
+            }}
+          >
+            <CheckCircle2 size={13} />
+            {completed.length}/{session.project.tasks.length} tasks
+          </button>
+        </div>
+        <div>
+          <button
+            onClick={() =>
+              setConfirm({
+                label: 'Reset workspace',
+                description:
+                  'Start again with the latest course and its starter files? Task progress is cleared. A recovery checkpoint of your current files will be saved first. Hints are kept.',
+                action: () =>
+                  workspace.mutate(
+                    '/reset',
+                    'POST',
+                    { reset_progress: false },
+                    true,
+                  ),
+              })
+            }
+          >
+            <RotateCcw size={12} />
+            Reset files
+          </button>
+          <button onClick={() => setBottom(bottom ? null : 'output')}>
+            <PanelBottom size={14} />
+            Panel
+          </button>
+          <span>
+            Ln {cursor.line}, Col {cursor.column}
           </span>
-          <span className="hidden md:inline text-[#ffb86c]">NVIDIA NIM</span>
+          <span>{file?.language}</span>
+          <span>UTF-8</span>
         </div>
       </footer>
+      {previewExpanded && runtime?.preview_url && (
+        <div className="modal-backdrop">
+          <section
+            className="preview-popout"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Expanded application preview"
+          >
+            <header>
+              <Code2 size={16} />
+              <span>Your application ? revision {runtime.revision}</span>
+              <button
+                autoFocus
+                aria-label="Close expanded preview"
+                onClick={() => setPreviewExpanded(false)}
+              >
+                <X size={18} />
+              </button>
+            </header>
+            <iframe
+              title="Expanded running application"
+              src={`${API_BASE_URL}${runtime.preview_url}`}
+              sandbox="allow-scripts allow-forms"
+              referrerPolicy="no-referrer"
+            />
+          </section>
+        </div>
+      )}
+      {confirm && (
+        <div className="modal-backdrop" onClick={() => setConfirm(null)}>
+          <section
+            className="wb-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <History size={25} />
+            <h2 id="confirm-title">{confirm.label}</h2>
+            <p>{confirm.description}</p>
+            <div>
+              <button
+                className="secondary-button"
+                onClick={() => setConfirm(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                onClick={() => {
+                  const action = confirm.action
+                  setConfirm(null)
+                  void action().catch(notifyError)
+                }}
+              >
+                {confirm.label}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   )
 }
 
-export default WorkspacePage
-
+function GraduationIcon() {
+  return <Lightbulb size={20} />
+}

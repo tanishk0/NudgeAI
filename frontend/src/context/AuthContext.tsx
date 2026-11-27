@@ -20,22 +20,35 @@ interface AuthContextValue {
   user: User | null
   profile: BackendUserProfile | null
   loading: boolean
-  signInWithEmail: (email: string, password: string) => Promise<{ error: string | null }>
+  signInWithEmail: (
+    email: string,
+    password: string,
+  ) => Promise<{ error: string | null }>
   signUpWithEmail: (
     email: string,
     password: string,
-    displayName: string
+    displayName: string,
   ) => Promise<{ error: string | null; needsEmailConfirmation: boolean }>
   signOut: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
+const demoMode =
+  import.meta.env.DEV && import.meta.env.VITE_DEMO_MODE === 'true'
+const demoUser: User = {
+  id: 'local-demo',
+  email: 'learner@demo.local',
+  user_metadata: { full_name: 'Demo learner' },
+  app_metadata: {},
+  aud: 'authenticated',
+  created_at: '2026-01-01T00:00:00Z',
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
-  const [user, setUser] = useState<User | null>(null)
+  const [user, setUser] = useState<User | null>(demoMode ? demoUser : null)
   const [profile, setProfile] = useState<BackendUserProfile | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(!demoMode)
 
   const syncUserWithBackend = async (activeSession: Session | null) => {
     if (!activeSession?.access_token) {
@@ -51,6 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
+    if (demoMode) return
     let mounted = true
 
     supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
@@ -87,7 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signUpWithEmail = async (
     email: string,
     password: string,
-    displayName: string
+    displayName: string,
   ) => {
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -134,4 +148,3 @@ export function useAuth() {
   }
   return ctx
 }
-

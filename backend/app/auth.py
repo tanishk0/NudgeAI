@@ -4,7 +4,7 @@ import time
 from typing import Any, Dict, Optional, Tuple
 import httpx
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -38,6 +38,12 @@ async def verify_supabase_token(token: str) -> Dict[str, Any]:
     """
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
     now = time.time()
+    if len(_TOKEN_CACHE) >= 4096:
+        for key in list(_TOKEN_CACHE):
+            if _TOKEN_CACHE[key][0] <= now:
+                del _TOKEN_CACHE[key]
+        if len(_TOKEN_CACHE) >= 4096:
+            del _TOKEN_CACHE[next(iter(_TOKEN_CACHE))]
 
     cached = _TOKEN_CACHE.get(token_hash)
     if cached and cached[0] > now:
@@ -52,7 +58,9 @@ async def verify_supabase_token(token: str) -> Dict[str, Any]:
                 token,
                 jwt_secret,
                 algorithms=["HS256"],
-                options={"verify_aud": False},
+                audience="authenticated",
+                issuer=f"{supabase_url}/auth/v1" if supabase_url else None,
+                options={"require": ["exp", "sub", "aud"]},
             )
             sub = payload.get("sub")
             email = payload.get("email")
@@ -119,7 +127,14 @@ async def verify_supabase_token(token: str) -> Dict[str, Any]:
         or email.split("@")[0],
         "avatar_url": meta.get("avatar_url"),
     }
-    _TOKEN_CACHE[token_hash] = (now + 300, user_info)
+    # The Auth API established identity. An unverified exp is used only to shorten
+    # this cache lifetime; it never grants access or replaces remote verification.
+    try:
+        claims = jwt.decode(token, options={"verify_signature": False})
+        expires_at = min(float(claims.get("exp", now + 60)), now + 300)
+    except (jwt.PyJWTError, ValueError, TypeError):
+        expires_at = now + 60
+    _TOKEN_CACHE[token_hash] = (expires_at, user_info)
     return user_info
 
 
@@ -132,8 +147,9 @@ def sync_user_in_db(db: Session, user_info: Dict[str, Any]) -> UserRecord:
 
     record = db.query(UserRecord).filter(UserRecord.id == user_id).first()
     if not record:
-        # Also check if a user record with same email exists
-        record = db.query(UserRecord).filter(UserRecord.email == email).first()
+        # Identity is the verified UUID. Email matches never transfer workspace ownership.
+        if db.query(UserRecord).filter(UserRecord.email == email).first():
+            raise HTTPException(409, "This email belongs to another identity. Contact support to link accounts.")
 
     if record:
         record.email = email
@@ -150,12 +166,21 @@ def sync_user_in_db(db: Session, user_info: Dict[str, Any]) -> UserRecord:
         )
         db.add(record)
 
-    db.commit()
+    from sqlalchemy.exc import IntegrityError
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        # Two first-login requests can race to create the same verified UUID.
+        record = db.get(UserRecord, user_id)
+        if not record:
+            raise HTTPException(409, "This identity conflicts with an existing account.")
     db.refresh(record)
     return record
 
 
 async def get_current_user(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
     db: Session = Depends(get_db),
 ) -> UserRecord:
@@ -167,6 +192,8 @@ async def get_current_user(
         )
 
     user_info = await verify_supabase_token(credentials.credentials)
+    from app.rate_limits import enforce
+    enforce(user_info["id"], request.url.path)
     return sync_user_in_db(db, user_info)
 
 

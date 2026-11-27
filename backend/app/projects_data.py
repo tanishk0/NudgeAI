@@ -1,8 +1,12 @@
 from typing import List, Optional
 from app.models import Project, ProjectSummary, ProjectFile, TaskItem
 from app.projects_vulpy import VULPY_PROJECT
+from app.projects_launchpad import LAUNCHPAD_PROJECT
+from app.projects_mini_swe import MINI_SWE_PROJECT
 
 PROJECTS_DATA: List[Project] = [
+    MINI_SWE_PROJECT,
+    LAUNCHPAD_PROJECT,
     Project(
         id="flawed-ai-payment-webhook",
         title="Harden an AI-Generated Payment Webhook Service",
@@ -28,8 +32,8 @@ PROJECTS_DATA: List[Project] = [
             "ignoring webhook replay windows."
         ),
         starter_files=[
-            ProjectFile(
-                path="webhook_service.py",
+                ProjectFile(
+                    path="webhook_service.py",
                 language="python",
                 content='''import hashlib
 import hmac
@@ -108,7 +112,7 @@ def handle_payment_webhook(event: Dict[str, Any], raw_body: bytes, sig: str, ts:
                 category="security",
                 objective="Bind the timestamp into the HMAC payload, enforce a 300-second replay window, and use constant-time comparison.",
                 instructions=(
-                    "In `verify_signature`, the AI made two classic security mistakes:\n"
+                    "In `verify_signature`, the AI made three classic security mistakes:\n"
                     "1. It didn't check if `timestamp` is within 300 seconds of `time.time()`, allowing replay attacks.\n"
                     "2. It didn't bind the `timestamp` into the signed message (`f\"{timestamp}.\".encode() + payload`).\n"
                     "3. It used `==` instead of `hmac.compare_digest(a, b)`, exposing a timing side-channel.\n\n"
@@ -120,7 +124,7 @@ def handle_payment_webhook(event: Dict[str, Any], raw_body: bytes, sig: str, ts:
                     "Use `hmac.compare_digest` for signature comparison",
                 ],
                 hints=[
-                    "Check `abs(time.time() - timestamp) > 300` first and return `False`.",
+                    "Reject negative age (future timestamps) and age greater than 300 seconds.",
                     "Construct the signed bytes as `f\"{timestamp}.\".encode('utf-8') + payload`.",
                     "Replace `signature_header == expected` with `hmac.compare_digest(signature_header, expected)`.",
                 ],

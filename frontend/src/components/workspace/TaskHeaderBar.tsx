@@ -7,7 +7,6 @@ import {
   ChevronUp,
   Circle,
   FileCode2,
-  ShieldAlert,
   Sparkles,
   XCircle,
 } from 'lucide-react'
@@ -18,7 +17,6 @@ interface TaskHeaderBarProps {
   activeTask: TaskItem
   completedTaskIds: string[]
   verification?: TaskVerificationReport
-  aiFailureMode: string
   onSelectTask: (taskId: string) => void
   onSelectTargetFile: (filePath: string) => void
 }
@@ -35,7 +33,6 @@ export function TaskHeaderBar({
   activeTask,
   completedTaskIds,
   verification,
-  aiFailureMode,
   onSelectTask,
   onSelectTargetFile,
 }: TaskHeaderBarProps) {
@@ -140,7 +137,7 @@ export function TaskHeaderBar({
       {specExpanded && (
         <div className="absolute left-3 right-3 top-full mt-1.5 z-30 max-h-[72vh] overflow-y-auto rounded-xl border border-white/15 bg-[#11121c]/95 p-5 shadow-[0_24px_60px_rgba(0,0,0,0.8)] backdrop-blur-xl">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-            {/* Left 7 Cols: Task Instructions & AI Failure Context */}
+            {/* Left 7 Cols: Task Instructions */}
             <div className="lg:col-span-7 space-y-4">
               <div>
                 <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#7aa2f7]">
@@ -149,23 +146,15 @@ export function TaskHeaderBar({
                     Task {activeTask.order}: {activeTask.title}
                   </span>
                 </div>
-                <p className="mt-1 text-xs text-white/75">{activeTask.objective}</p>
+                <p className="mt-1 text-xs text-white/75">
+                  {activeTask.objective}
+                </p>
               </div>
 
               <div className="rounded-lg border border-white/[0.07] bg-[#0b0c10]/80 p-3.5 text-xs leading-relaxed text-white/85 prose prose-invert max-w-none">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {activeTask.instructions}
                 </ReactMarkdown>
-              </div>
-
-              <div className="rounded-lg border border-[#ffb86c]/20 bg-[#ffb86c]/[0.05] p-3">
-                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#ffb86c]">
-                  <ShieldAlert className="h-3.5 w-3.5" />
-                  <span>Why the AI Failed in Production</span>
-                </div>
-                <p className="mt-1 text-xs text-white/70 leading-relaxed">
-                  {aiFailureMode}
-                </p>
               </div>
             </div>
 
@@ -177,7 +166,8 @@ export function TaskHeaderBar({
                     Validation Criteria
                   </span>
                   <span className="font-mono text-[11px] text-[#ffb86c]">
-                    {passedCriteriaCount} of {activeTask.validation_criteria.length} passed
+                    {passedCriteriaCount} of{' '}
+                    {activeTask.validation_criteria.length} passed
                   </span>
                 </div>
 
@@ -207,7 +197,9 @@ export function TaskHeaderBar({
                             <XCircle className="h-4 w-4 shrink-0 text-[#f38ba8] mt-0.5" />
                           )}
                           <div className="min-w-0 flex-1">
-                            <p className="font-medium leading-snug">{criterion}</p>
+                            <p className="font-medium leading-snug">
+                              {criterion}
+                            </p>
                             {evalItem?.reason && (
                               <p className="mt-1 text-[11px] text-white/60">
                                 {evalItem.reason}
@@ -238,4 +230,3 @@ export function TaskHeaderBar({
     </div>
   )
 }
-

@@ -5,11 +5,12 @@ from app.database import Base, engine, SessionLocal
 from app.db_models import ProjectRecord
 from app.models import Project, ProjectSummary, ProjectFile, TaskItem
 from app.projects_data import PROJECTS_DATA
+from app.project_briefs import enrich_project
 
 
 def record_to_project(record: ProjectRecord) -> Project:
     """Convert a PostgreSQL ProjectRecord row into a Pydantic Project model."""
-    return Project(
+    return enrich_project(Project(
         id=record.id,
         title=record.title,
         subtitle=record.subtitle,
@@ -22,7 +23,7 @@ def record_to_project(record: ProjectRecord) -> Project:
         ai_failure_mode=record.ai_failure_mode,
         starter_files=[ProjectFile(**f) for f in (record.starter_files or [])],
         tasks=[TaskItem(**t) for t in (record.tasks or [])],
-    )
+    ))
 
 
 def record_to_summary(record: ProjectRecord) -> ProjectSummary:
@@ -40,7 +41,7 @@ def record_to_summary(record: ProjectRecord) -> ProjectSummary:
     )
 
 
-def init_db_and_seed() -> int:
+def init_db_and_seed(publish: bool = False, project_id: str | None = None) -> int:
     """
     Create PostgreSQL tables if they do not exist and upsert starter projects
     from `PROJECTS_DATA` so the database is always ready.
@@ -49,15 +50,20 @@ def init_db_and_seed() -> int:
     # Ensure all models are imported before create_all
     import app.db_models  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
+    from app.migrations import migrate
+    migrate()
 
     with SessionLocal() as db:
         for p in PROJECTS_DATA:
+            if project_id and p.id != project_id:
+                continue
             existing = db.query(ProjectRecord).filter(ProjectRecord.id == p.id).first()
             starter_files_json = [f.model_dump() for f in p.starter_files]
             tasks_json = [t.model_dump() for t in p.tasks]
 
             if existing:
+                if not publish:
+                    continue
                 existing.title = p.title
                 existing.subtitle = p.subtitle
                 existing.difficulty = p.difficulty
@@ -92,6 +98,7 @@ def init_db_and_seed() -> int:
 
 def list_projects_from_db(db: Session) -> List[ProjectSummary]:
     records = db.query(ProjectRecord).order_by(ProjectRecord.created_at.asc()).all()
+    records.sort(key=lambda record: "Presentation project" not in (record.tags or []))
     return [record_to_summary(r) for r in records]
 
 
@@ -100,4 +107,13 @@ def get_project_from_db(db: Session, project_id: str) -> Optional[Project]:
     if not record:
         return None
     return record_to_project(record)
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Publish authored curriculum without changing pinned workspaces.")
+    parser.add_argument("--publish", action="store_true", help="Update catalogue definitions for new workspaces")
+    parser.add_argument('--project', help='Publish only this project ID')
+    args = parser.parse_args()
+    print(f"Catalogue ready: {init_db_and_seed(publish=args.publish, project_id=args.project)} projects.")
 

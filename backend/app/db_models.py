@@ -8,11 +8,15 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     UniqueConstraint,
+    JSON,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+
+# PostgreSQL is the deployment database; SQLite supports the explicit local demo and tests.
+JSONB = JSONB().with_variant(JSON(), "sqlite")
 
 
 def utc_now() -> datetime:
@@ -150,4 +154,51 @@ class ChatMessageRecord(Base):
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     session = relationship("WorkspaceSessionRecord", back_populates="chat_messages")
+
+
+class ProjectVersionRecord(Base):
+    __tablename__ = "project_versions"
+    id = Column(String(64), primary_key=True)
+    project_id = Column(String(128), ForeignKey("projects.id"), nullable=False, index=True)
+    definition = Column(JSONB, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class WorkspaceStateRecord(Base):
+    __tablename__ = "workspace_states"
+    session_id = Column(String(64), ForeignKey("workspace_sessions.id", ondelete="CASCADE"), primary_key=True)
+    version_id = Column(String(64), ForeignKey("project_versions.id"), nullable=False)
+    revision = Column(Integer, nullable=False, default=0)
+
+
+class WorkspaceFileRecord(Base):
+    __tablename__ = "workspace_files"
+    __table_args__ = (UniqueConstraint("session_id", "path", name="uq_workspace_file_path"),)
+    id = Column(String(64), primary_key=True, default=generate_uuid)
+    session_id = Column(String(64), ForeignKey("workspace_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    path = Column(String(255), nullable=False)
+    language = Column(String(32), nullable=False)
+    content = Column(Text, nullable=False, default="")
+    revision = Column(Integer, nullable=False, default=0)
+
+
+class WorkspaceSnapshotRecord(Base):
+    __tablename__ = "workspace_snapshots"
+    id = Column(String(64), primary_key=True, default=generate_uuid)
+    session_id = Column(String(64), ForeignKey("workspace_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    label = Column(String(160), nullable=False)
+    revision = Column(Integer, nullable=False)
+    files = Column(JSONB, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class WorkspaceRunRecord(Base):
+    __tablename__ = "workspace_runs"
+    id = Column(String(64), primary_key=True, default=generate_uuid)
+    session_id = Column(String(64), ForeignKey("workspace_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    revision = Column(Integer, nullable=False)
+    content_hash = Column(String(64), nullable=False)
+    kind = Column(String(32), nullable=False)
+    result = Column(JSONB, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
 

@@ -1,0 +1,36 @@
+.concept-layout { max-width: 1200px; margin: 0 auto; padding: 52px 28px 90px; display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 64px; }
+.concept-sidebar { align-self: start; position: sticky; top: 24px; max-height: calc(100vh - 48px); overflow-y: auto; padding-right: 12px; font-size: 14px; }
+.concept-sidebar > a { color: #c4c8d8; text-decoration: none; line-height: 1.6; }
+.concept-sidebar h2 { font-size: 16px; margin: 28px 0 8px; color: #f1f3ff; }
+.concept-sidebar p { color: #9299ae; line-height: 1.6; margin-bottom: 20px; }
+.concept-sidebar nav { display: grid; gap: 4px; }
+.concept-sidebar nav a { display: flex; gap: 10px; padding: 10px; border-radius: 8px; color: #a5acc1; line-height: 1.5; text-decoration: none; }
+.concept-sidebar nav a > span:first-child { color: #939bb6; min-width: 22px; }
+.concept-sidebar nav a[aria-current="page"] { color: #e9edff; background: #7aa2f71a; box-shadow: inset 2px 0 #7aa2f7; }
+.concept-sidebar nav a:hover { background: #ffffff08; color: #fff; }
+.concept-article { min-width: 0; max-width: 760px; }
+.concept-kicker { font-size: 14px; color: #9ca9cd; margin: 24px 0 12px; }
+.concept-article h1 { color: #f2f4ff; font-size: clamp(28px, 3.5vw, 42px); line-height: 1.2; letter-spacing: -.035em; }
+.concept-intro { color: #adb6cf; line-height: 1.75; font-size: 18px; margin: 18px 0; }
+.concept-content { margin-top: 36px; border-top: 1px solid #ffffff12; color: #c5ccde; font-size: 16px; line-height: 1.85; overflow-wrap: anywhere; }
+.concept-content h3 { color: #f1f3ff; font-size: 22px; line-height: 1.4; margin: 34px 0 14px; }
+.concept-content p { margin: 14px 0; }
+.concept-content a { color: #99b8ff; text-underline-offset: 4px; }
+.concept-content pre { background: #0b0d16; border: 1px solid #ffffff14; border-radius: 12px; padding: 20px; overflow-x: auto; white-space: pre; line-height: 1.7; margin: 24px 0; }
+.concept-content code { color: #c3d6ff; font-size: .9em; }
+.concept-content :not(pre) > code { background: #ffffff07; padding: 2px 5px; border-radius: 4px; }
+.concept-practice { display: flex; gap: 16px; padding: 26px; border: 1px solid #7aa2f744; border-radius: 14px; background: #7aa2f70a; margin-top: 40px; color: #adc7ff; }
+.concept-practice > svg { flex-shrink: 0; margin-top: 4px; }
+.concept-practice h2 { color: #f0f4ff; font-size: 20px; margin: 0 0 10px; }
+.concept-practice p { color: #aab4ce; font-size: 16px; line-height: 1.7; margin: 0 0 20px; }
+.concept-practice .primary-button { display: inline-flex; width: auto; text-decoration: none; font-size: 14px; }
+.concept-pagination { display: flex; justify-content: space-between; gap: 28px; border-top: 1px solid #ffffff14; padding-top: 26px; margin-top: 36px; }
+.concept-pagination a { color: #c1d3ff; text-decoration: none; flex: 1; font-size: 16px; line-height: 1.6; }
+.concept-pagination a:last-child { text-align: right; }
+.concept-pagination small { display: block; color: #909ab4; font-size: 14px; margin-bottom: 5px; }
+.learn-concept-link { display: inline-flex; align-items: center; gap: 8px; color: #b3ceff; background: #7aa2f710; border: 1px solid #7aa2f733; border-radius: 8px; padding: 9px 12px; margin: 10px 0; font-size: 14px; text-decoration: none; }
+.learn-concept-link:hover { color: #fff; border-color: #7aa2f788; }
+.phase-roadmap-heading { color: #b9caff; font-size: 16px; margin: 24px 0 8px; font-weight: 600; }
+.phase-roadmap-meta { display: block; color: #99a2b8; font-size: 14px; margin: 8px 0; }
+@media (max-width: 900px) { .concept-layout { grid-template-columns: 1fr; gap: 30px; padding: 28px 20px 60px; } .concept-sidebar { position: static; max-height: 240px; border-bottom: 1px solid #ffffff15; padding-bottom: 18px; } .concept-article { max-width: none; } .concept-page .brief-nav { flex-wrap: wrap; gap: 18px; } }
+@media (max-width: 520px) { .concept-practice { padding: 18px; } .concept-pagination { flex-direction: column; } .concept-pagination a:last-child { text-align: left; } }

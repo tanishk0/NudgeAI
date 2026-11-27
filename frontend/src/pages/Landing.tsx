@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import heroBg from '../assets/hero-bg.jpg'
+import { PixelHeroCanvas } from '../components/PixelHeroCanvas'
 import { useAuth } from '../context/AuthContext'
 
 export function Landing() {
@@ -7,11 +7,11 @@ export function Landing() {
 
   return (
     <div className="relative h-screen min-h-[640px] w-full overflow-hidden bg-[#19132c] text-white select-none">
-      {/* Full-bleed Sunset Pixel Art Background */}
-      <img
-        src={heroBg}
-        alt="Golden hour landscape overlooking a city skyline"
-        className="absolute inset-0 h-full w-full object-cover object-center"
+      {/* Full-bleed Animated Sunset Pixel Art Background */}
+      <PixelHeroCanvas
+        src="/assets/hero-bg.jpg"
+        alt="Golden hour pixel art landscape overlooking a city skyline"
+        className="absolute inset-0 h-full w-full"
       />
 
       {/* Left-side atmospheric gradient wash matching the reference:

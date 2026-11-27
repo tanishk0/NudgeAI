@@ -1,0 +1,43 @@
+name: Nudge checks
+on: [push, pull_request]
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: nudge
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: nudge_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nudge -d nudge_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NUDGE_TEST_DATABASE_URL: postgresql+psycopg://nudge:test-only@localhost:5432/nudge_test
+      NUDGE_DOCKER_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r backend/requirements.txt
+      - run: docker build -t nudge-runtime:local backend/runtime
+      - run: python -m unittest discover -s tests -v
+        working-directory: backend

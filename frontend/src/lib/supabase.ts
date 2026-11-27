@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim() || ''
+const supabaseUrl =
+  (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim() || ''
 const supabaseAnonKey = (
   (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ||
   (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined) ||
@@ -8,7 +9,10 @@ const supabaseAnonKey = (
 ).trim()
 
 export const API_BASE_URL = (
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) || 'http://localhost:8000'
+  (import.meta.env.DEV && import.meta.env.VITE_DEMO_MODE === 'true'
+    ? 'http://localhost:8001'
+    : (import.meta.env.VITE_API_BASE_URL as string | undefined)) ||
+  'http://localhost:8000'
 )
   .trim()
   .replace(/\/$/, '')
@@ -21,10 +25,10 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 })
 
-export async function apiFetch<T>(
+export async function apiRequest(
   endpoint: string,
-  options: RequestInit = {}
-): Promise<T> {
+  options: RequestInit = {},
+): Promise<Response> {
   const {
     data: { session },
   } = await supabase.auth.getSession()
@@ -47,14 +51,31 @@ export async function apiFetch<T>(
     try {
       const errBody = await res.json()
       if (errBody?.detail) {
-        errMsg = typeof errBody.detail === 'string' ? errBody.detail : JSON.stringify(errBody.detail)
+        errMsg =
+          typeof errBody.detail === 'string'
+            ? errBody.detail
+            : JSON.stringify(errBody.detail)
       }
     } catch {
       // ignore JSON parse errors
     }
-    throw new Error(errMsg)
+    throw new ApiError(errMsg, res.status)
   }
 
-  return res.json() as Promise<T>
+  return res
 }
 
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
+}
+
+export async function apiFetch<T>(
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
+  return (await apiRequest(endpoint, options)).json() as Promise<T>
+}
